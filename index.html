@@ -181,19 +181,19 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   </div>
   <div id="panels"></div>
   <section class="plots" id="plots" hidden>
-    <div class="plot" id="paramsec">
+    <div class="plot" id="paramsec" hidden>
       <h2>Parameters</h2>
       <p class="hint">Posterior mean and 95% interval; dashed line = true value.</p>
       <div class="pgrid" id="paramplot"></div>
     </div>
-    <div class="plot">
+    <div class="plot" hidden>
       <div class="bar" style="margin:0"><h2>Pairs not yet coalesced <a class="src" href="https://doi.org/10.1093/molbev/mss170">cumulative form of Fig. 3 in Nicolaisen and Desai (2012)</a></h2>
         <label class="toggle" style="margin:0"><input type="checkbox" id="optTheory" checked> Theory (Figs. 3–5)</label></div>
       <p class="hint" id="skyhint"></p>
       <div class="plegend" id="skylegend"></div>
       <div id="skyplot"></div>
     </div>
-    <div class="plot">
+    <div class="plot" hidden>
       <div class="bar" style="margin:0"><h2>Effective mutation rate, U<sub>e</sub>(t) <a class="src" href="https://doi.org/10.1093/molbev/mss170">Fig. 4 in Nicolaisen and Desai (2012)</a></h2>
         <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px">Bin width (generations)
           <input id="binSize" type="number" min="0.1" step="any" value="10" class="field" style="width:80px"></label></div>
@@ -201,7 +201,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
       <div class="plegend" id="mutlegend"></div>
       <div id="mutplot"></div>
     </div>
-    <div class="plot">
+    <div class="plot" hidden>
       <div class="bar" style="margin:0"><h2>Pairwise coalescence times, cumulative <a class="src" href="https://doi.org/10.1093/molbev/mss170">cumulative form of Fig. 5 in Nicolaisen and Desai (2012)</a></h2></div>
       <p class="hint" id="psihint"></p>
       <div class="plegend" id="psilegend"></div>
@@ -897,8 +897,6 @@ $("optCmLog").addEventListener("change", () => renderAll());
 
 function renderPlots(D) {
   $("plots").hidden = false;
-  renderParams();
-  renderFig45(D);
   renderTimePlot(D, "ltt");
   renderTimePlot(D, "ccoal");
   renderTimePlot(D, "cmut");
