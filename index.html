@@ -67,6 +67,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 /* main */
 #main { flex: 1; min-width: 0; height: 100%; overflow-y: auto; padding: 16px 22px 40px; }
 #head h1 { font-family: var(--font-display); font-weight: 400; font-size: 26px; line-height: 1.25; margin: 0 0 4px; text-wrap: balance; }
+#head .shared { font-size: 15px; line-height: 1.45; margin: 2px 0 4px; max-width: 110ch; }
+#head .shared:empty { display: none; }
+.ph { min-height: 22px; }
 #head .sub { font-size: 12.5px; color: var(--muted); }
 .bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 14px 0 6px; flex-wrap: wrap; }
 .bar .ttl { font-size: 13px; color: var(--muted); }
@@ -146,6 +149,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 <main id="main">
   <div id="head">
     <h1 id="title">Stacked trees</h1>
+    <div class="shared" id="shared"></div>
     <div class="sub" id="sub"></div>
   </div>
   <div class="bar">
@@ -370,7 +374,7 @@ function renderAll() {
   if (host.dataset.ids !== want) {
     host.innerHTML = state.panels.map(p => `
       <section class="panel" data-id="${p.id}">
-        <div class="ph"><span class="chip">${esc(p.label)}</span><div><div class="ptitle">${esc(p.meta.title || p.file)}</div>${p.meta.description ? `<div class="pdesc">${esc(p.meta.description)}</div>` : ""}</div></div>
+        <div class="ph"><span class="chip">${esc(p.label)}</span><div>${p.titleShort ? `<div class="ptitle">${esc(p.titleShort)}</div>` : ""}${p.descShort ? `<div class="pdesc">${esc(p.descShort)}</div>` : ""}</div></div>
         <div class="pw"><svg role="img" aria-label="Phylogeny: ${esc(p.label)}"></svg></div>
       </section>`).join("");
     host.dataset.ids = want;
@@ -413,11 +417,15 @@ function renderPanel(p, svg, D) {
     const c = col(n.attrs[key]), w = wid(n), x = sx(n.x), y = sy(n.y);
     const op = dim(n) ? ` stroke-opacity="0.15"` : "";
     const px = n.parent ? sx(n.parent.x) : x;
-    if (n.parent) s.push(`<path d="M${px.toFixed(1)} ${y.toFixed(1)}H${x.toFixed(1)}" stroke="${c}" stroke-width="${w.toFixed(2)}"${op}/>`);
+    // start a child's stem at the outer (left) edge of its parent's vertical bar, so corners are flush
+    const sx0 = n.parent && n.parent.children.length > 1 ? px - wid(n.parent) / 2 : px;
+    if (n.parent) s.push(`<path d="M${sx0.toFixed(1)} ${y.toFixed(1)}H${x.toFixed(1)}" stroke="${c}" stroke-width="${w.toFixed(2)}"${op}/>`);
     if (n.children.length > 1) {
-      let lo = Infinity, hi = -Infinity;
-      for (const ch of n.children) { lo = Math.min(lo, ch.y); hi = Math.max(hi, ch.y); }
-      s.push(`<path d="M${x.toFixed(1)} ${sy(lo).toFixed(1)}V${sy(hi).toFixed(1)}" stroke="${c}" stroke-width="${w.toFixed(2)}" stroke-linecap="square"${op}/>`);
+      // vertical bar runs from the outer edge of the top child's stem to the outer edge of the bottom child's
+      let top = n.children[0], bot = n.children[0];
+      for (const ch of n.children) { if (ch.y < top.y) top = ch; if (ch.y > bot.y) bot = ch; }
+      const y0 = sy(top.y) - wid(top) / 2, y1 = sy(bot.y) + wid(bot) / 2;
+      s.push(`<path d="M${x.toFixed(1)} ${y0.toFixed(1)}V${y1.toFixed(1)}" stroke="${c}" stroke-width="${w.toFixed(2)}"${op}/>`);
     }
     vis.push({ n, x, y, px, w });
     if (!n.children.length && n.y >= D.Y0 && n.y <= D.Y1) {
@@ -555,7 +563,12 @@ function renderSide() {
   $("crumb").textContent = src.owner ? `${src.owner} / ${src.repo}${crumbs ? " / " + crumbs : ""}` : crumbs;
   $("title").textContent = crumbs ? crumbs.replace(/^(\w)/, s => s.toUpperCase()) : (state.panels.length === 1 ? state.panels[0].label : "Stacked trees");
   const counts = [...new Set(state.panels.map(p => p.tips.length))];
-  $("sub").textContent = state.panels.length ? `Showing ${state.panels.length} tree${state.panels.length > 1 ? "s" : ""} · ${counts.join(" / ")} tips each · aligned on one time axis` : "";
+  // sentences that every panel shares go in the header once; panels keep only what differs
+  const T = sharedSentences(state.panels.map(p => p.meta.title || ""));
+  const Dd = sharedSentences(state.panels.map(p => p.meta.description || ""));
+  state.panels.forEach((p, k) => { p.titleShort = T.rest[k] || (p.meta.title ? "" : p.file); p.descShort = Dd.rest[k]; });
+  $("shared").textContent = T.shared;
+  $("sub").textContent = state.panels.length ? [Dd.shared.replace(/\.$/, ""), `Showing ${state.panels.length} tree${state.panels.length > 1 ? "s" : ""} · ${counts.join(" / ")} tips each · aligned on one time axis`].filter(Boolean).join(" · ") : "";
 }
 
 function refresh(full = true) {
@@ -678,6 +691,17 @@ addEventListener("hashchange", () => { const id = decodeURIComponent(location.ha
 $("dsfilter").addEventListener("input", renderGroups);
 
 /* ---------- utils ---------- */
+function splitSentences(t) { return t.trim() ? t.trim().split(/(?<=\.)\s+(?=[A-Z(])/) : []; }
+function sharedSentences(texts) {
+  const norm = x => x.trim().replace(/\.$/, "");
+  const lists = texts.map(splitSentences);
+  if (lists.length < 2) return { shared: "", rest: texts };
+  const sets = lists.map(l => new Set(l.map(norm)));
+  const isShared = x => sets.every(st => st.has(norm(x)));
+  const shared = lists[0].filter(isShared).map(x => norm(x) + ".").join(" ");
+  const rest = lists.map(l => l.filter(x => !isShared(x)).join(" "));
+  return { shared, rest };
+}
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function fmt(v) { if (typeof v !== "number" || !isFinite(v)) return String(v); const a = Math.abs(v); return a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toPrecision(3); }
 function fmtTick(v) { return Math.abs(v) < 1e-9 ? "0" : (+v.toFixed(6)).toLocaleString("en-GB"); }
