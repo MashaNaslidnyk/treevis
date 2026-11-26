@@ -142,7 +142,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     <label class="toggle"><input type="checkbox" id="optLabels" checked> Tip labels when zoomed in</label>
     <label class="toggle"><input type="checkbox" id="optCross" checked> Hover guide across panels</label>
     <label class="lbl" for="optH">Panel height: <span id="optHv"></span> px</label>
-    <input type="range" id="optH" min="180" max="1400" step="10" value="420">
+    <input type="range" id="optH" min="180" max="4000" step="10" value="420">
   </div>
 </aside>
 
@@ -155,6 +155,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   <div class="bar">
     <span class="ttl" id="zoomttl">Phylogeny · click a branch to zoom all panels to that clade</span>
     <span class="row">
+      <button class="zbtn" id="hdown" type="button" aria-label="Make all panels shorter">Shorter</button>
+      <button class="zbtn" id="hup" type="button" aria-label="Make all panels taller">Taller</button>
       <button class="zbtn" id="zout" type="button" disabled>Zoom out</button>
       <button class="zbtn" id="zroot" type="button" disabled>Zoom to root</button>
     </span>
@@ -595,7 +597,15 @@ $("optMut").addEventListener("change", e => { state.showMut = e.target.checked; 
 $("optThick").addEventListener("change", e => { state.thick = e.target.checked; renderAll(); });
 $("optLabels").addEventListener("change", e => { state.labels = e.target.checked; renderAll(); });
 $("optCross").addEventListener("change", e => { state.cross = e.target.checked; overlays(); });
-$("optH").addEventListener("input", e => { state.panelH = +e.target.value; $("optHv").textContent = state.panelH; renderAll(); });
+function setPanelH(h) {
+  state.panelH = Math.round(Math.max(180, Math.min(4000, h)) / 10) * 10;
+  $("optH").value = state.panelH; $("optHv").textContent = state.panelH;
+  try { localStorage.setItem("treevis.panelH", state.panelH); } catch (e) {}
+  renderAll();
+}
+$("optH").addEventListener("input", e => setPanelH(+e.target.value));
+$("hup").addEventListener("click", () => setPanelH(state.panelH * 1.5));
+$("hdown").addEventListener("click", () => setPanelH(state.panelH / 1.5));
 $("zroot").addEventListener("click", () => { state.zoom = null; renderAll(); });
 $("zout").addEventListener("click", zoomOut);
 $("addbtn").addEventListener("click", () => $("file").click());
@@ -707,6 +717,7 @@ function fmt(v) { if (typeof v !== "number" || !isFinite(v)) return String(v); c
 function fmtTick(v) { return Math.abs(v) < 1e-9 ? "0" : (+v.toFixed(6)).toLocaleString("en-GB"); }
 
 state.panelH = Math.round(Math.max(280, Math.min(600, (innerHeight - 170) / 3 - 46)) / 10) * 10;
+try { const h = +localStorage.getItem("treevis.panelH"); if (h >= 180) state.panelH = Math.min(4000, h); } catch (e) {}
 $("optH").value = state.panelH;
 $("optHv").textContent = state.panelH;
 init();
