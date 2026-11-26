@@ -21,6 +21,7 @@
   color-scheme: light;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 14px; display: flex; overflow: hidden; }
 button, select, input { font-family: inherit; font-size: 13px; color: var(--ink); }
@@ -199,7 +200,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
       <div class="plegend" id="agelegend"></div>
       <div id="ageplot" class="chart"></div>
     </div>
-    <div class="plot">
+    <div class="plot" hidden>
       <div class="bar" style="margin:0"><h2>Population size through time, as a neutral analysis would read it</h2>
         <span class="row" style="align-items:center;gap:14px">
           <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px">Coalescences per step
@@ -237,34 +238,6 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
       <p class="hint" id="ltthint"></p>
       <div class="plegend" id="lttlegend"></div>
       <div id="lttplot"></div>
-    </div>
-    <div class="plot">
-      <div class="bar" style="margin:0"><h2>Cumulative coalescences</h2>
-        <label class="toggle" style="margin:0"><input type="checkbox" id="optCcLog" checked> Log time axis</label></div>
-      <p class="hint" id="cchint"></p>
-      <div class="plegend" id="cclegend"></div>
-      <div id="ccplot"></div>
-    </div>
-    <div class="plot">
-      <div class="bar" style="margin:0"><h2>Cumulative mutations</h2>
-        <label class="toggle" style="margin:0"><input type="checkbox" id="optCmLog" checked> Log time axis</label></div>
-      <p class="hint" id="cmhint"></p>
-      <div class="plegend" id="cmlegend"></div>
-      <div id="cmplot"></div>
-    </div>
-    <div class="pgrid2" hidden>
-      <div class="plot">
-        <h2>Mutation rate by fitness class</h2>
-        <p class="hint" id="cmrhint"></p>
-        <div class="plegend" id="cmrlegend"></div>
-        <div id="cmrplot" class="chart"></div>
-      </div>
-      <div class="plot">
-        <h2>Coalescence rate by fitness class</h2>
-        <p class="hint" id="ccrhint"></p>
-        <div class="plegend" id="ccrlegend"></div>
-        <div id="ccrplot" class="chart"></div>
-      </div>
     </div>
     <div class="plot" hidden>
       <h2>Node time errors</h2>
@@ -779,8 +752,7 @@ function stepAt(steps, x) { // steps: [{x0 (younger), x1 (older), v}]
 }
 const TP = { sky2: { host: "popplot", hint: "pophint", legend: "poplegend", log: "optPopLog", ylab: "population size, Nₑ", unit: "Nₑ" },
              ltt: { host: "lttplot", hint: "ltthint", legend: "lttlegend", log: "optLog", ylab: "lineages", unit: "lineages", text: "Number of lineages alive at each time." },
-             ccoal: { host: "ccplot", hint: "cchint", legend: "cclegend", log: "optCcLog", ylab: "coalescences so far", unit: "coalescences", text: "Number of coalescences between the present and each time." },
-             cmut: { host: "cmplot", hint: "cmhint", legend: "cmlegend", log: "optCmLog", ylab: "mutations so far", unit: "mutations", text: "Number of mutation events between the present and each time." } };
+ };
 function cumulativeSteps(xsDesc, counts, rootX) { // xsDesc: event times, present first; counts at each
   const out = []; let cum = 0;
   for (let i = 0; i < xsDesc.length; i++) { cum += counts[i]; out.push({ x0: xsDesc[i], x1: i + 1 < xsDesc.length ? xsDesc[i + 1] : rootX, v: cum }); }
@@ -941,20 +913,15 @@ for (const mode of Object.keys(TP)) {
 }
 $("binSize").addEventListener("change", () => { state.autoBin = false; renderAll(); });
 $("optTheory").addEventListener("change", () => renderAll());
-$("optCcLog").addEventListener("change", () => renderAll());
 $("optPopLog").addEventListener("change", () => renderAll());
 $("popPer").addEventListener("change", () => renderAll());
 $("optAgeLog").addEventListener("change", () => renderAll());
-$("optCmLog").addEventListener("change", () => renderAll());
 
 function renderPlots(D) {
   $("plots").hidden = false;
   renderTimePlot(D, "ltt");
-  renderTimePlot(D, "ccoal");
-  renderTimePlot(D, "cmut");
   renderParams();
   renderAges();
-  renderTimePlot(D, "sky2");
 }
 
 /* ---------- class-aware and node-matched diagnostics ---------- */
