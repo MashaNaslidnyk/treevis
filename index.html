@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>treevis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Auspice look: light sidebar of controls on the left, stacked phylogeny panels on the right sharing one time axis */
+  --bg: #ffffff;
+  --side: #f9f9f9;
+  --ink: #333333;
+  --muted: #8a8a8a;
+  --rule: #e2e2e2;
+  --accent: #5097ba;
+  --font-body: "Lato", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-display: "Lato", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 14px; display: flex; overflow: hidden; }
+button, select, input { font-family: inherit; font-size: 13px; color: var(--ink); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* sidebar */
+#side { width: 268px; flex: 0 0 268px; background: var(--side); border-right: 1px solid var(--rule); height: 100%; overflow-y: auto; padding: 14px 16px 28px; display: flex; flex-direction: column; gap: 18px; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; letter-spacing: .2px; }
+.brand svg { flex: 0 0 auto; }
+.crumb { font-size: 13px; color: var(--ink); line-height: 1.35; word-break: break-word; }
+.sec h3 { margin: 0 0 8px; font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.sec .hint { font-size: 12px; color: var(--muted); line-height: 1.4; margin: 6px 0 0; }
+select, .field { width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 3px; background: #fff; }
+.btn { border: 1px solid #ccc; background: #fff; border-radius: 3px; padding: 6px 10px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.07); color: #fff; }
+.row { display: flex; gap: 6px; flex-wrap: wrap; }
+.dslist { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.dslist li { display: flex; align-items: center; gap: 4px; background: #fff; border: 1px solid var(--rule); border-radius: 3px; padding: 4px 4px 4px 8px; font-size: 12.5px; }
+.dslist li .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dslist li .ref { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); font-weight: 700; }
+.ib { border: 0; background: none; cursor: pointer; padding: 2px 5px; color: var(--muted); font-size: 13px; line-height: 1; border-radius: 3px; }
+.ib:hover { color: var(--ink); background: #eee; }
+.toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; margin: 6px 0; }
+.toggle input { accent-color: var(--accent); }
+label.lbl { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.legend { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+.legend .it { display: flex; align-items: center; gap: 7px; cursor: default; padding: 1px 3px; border-radius: 2px; font-variant-numeric: tabular-nums; }
+.legend .it:hover { background: #eee; }
+.legend .sw { width: 12px; height: 12px; border-radius: 2px; flex: 0 0 auto; }
+.legend .ct { margin-left: auto; color: var(--muted); font-size: 11.5px; }
+.grad { height: 12px; border-radius: 2px; }
+.gradlab { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 3px; }
+.glist { list-style: none; margin: 8px 0 0; padding: 0; max-height: 300px; overflow-y: auto; border: 1px solid var(--rule); border-radius: 3px; background: #fff; }
+.glist a { display: flex; justify-content: space-between; gap: 8px; padding: 5px 8px; font-size: 12.5px; color: var(--ink); text-decoration: none; border-bottom: 1px solid #f2f2f2; font-variant-numeric: tabular-nums; }
+.glist a:hover { background: #f3f7fa; }
+.glist a.on { background: var(--accent); color: #fff; }
+.glist a .n { color: var(--muted); font-size: 11px; }
+.glist a.on .n { color: #e6f0f5; }
+.err { color: #b2182b; font-size: 12px; line-height: 1.4; }
+
+/* main */
+#main { flex: 1; min-width: 0; height: 100%; overflow-y: auto; padding: 16px 22px 40px; }
+#head h1 { font-family: var(--font-display); font-weight: 400; font-size: 26px; line-height: 1.25; margin: 0 0 4px; text-wrap: balance; }
+#head .sub { font-size: 12.5px; color: var(--muted); }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 14px 0 6px; flex-wrap: wrap; }
+.bar .ttl { font-size: 13px; color: var(--muted); }
+.zbtn { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; border: 1px solid #ccc; border-radius: 3px; color: var(--muted); background: #fff; padding: 4px 8px; cursor: pointer; }
+.zbtn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.zbtn:disabled { opacity: .45; cursor: default; }
+.panel { border-top: 1px solid var(--rule); padding-top: 8px; margin-top: 10px; }
+.ph { display: flex; gap: 10px; align-items: baseline; }
+.chip { flex: 0 0 auto; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; padding: 3px 7px; border-radius: 3px; background: #eef4f8; color: var(--accent); }
+.ptitle { font-size: 14px; line-height: 1.4; }
+.pdesc { font-size: 12px; color: var(--muted); margin: 2px 0 0; line-height: 1.4; }
+.pw { position: relative; }
+.pw svg { display: block; width: 100%; cursor: pointer; user-select: none; }
+.axis text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+#tip { position: fixed; pointer-events: none; z-index: 10; background: #fff; border: 1px solid #ddd; box-shadow: 0 2px 10px rgba(0,0,0,.12); border-radius: 4px; padding: 8px 10px; font-size: 12px; line-height: 1.45; max-width: 340px; display: none; }
+#tip table { border-collapse: collapse; margin-top: 4px; font-variant-numeric: tabular-nums; }
+#tip td { padding: 1px 8px 1px 0; }
+#tip td.n { text-align: right; }
+#tip .h { font-weight: 700; }
+#tip .m { color: var(--muted); }
+#drop { position: fixed; inset: 0; background: rgba(80,151,186,.12); border: 3px dashed var(--accent); display: none; align-items: center; justify-content: center; font-size: 20px; color: var(--accent); z-index: 20; pointer-events: none; }
+#empty { padding: 40px 0; color: var(--muted); }
+@media (max-width: 760px) {
+  body { flex-direction: column; overflow: auto; }
+  #side { width: 100%; flex: none; height: auto; border-right: 0; border-bottom: 1px solid var(--rule); }
+  #main { height: auto; overflow: visible; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<aside id="side">
+  <div class="brand">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="M3 11H8M8 5V17M8 5H19M8 17H19M13 11H19M13 8V14" stroke="#5097ba" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+    treevis
+  </div>
+  <div class="crumb" id="crumb"></div>
+
+  <div class="sec">
+    <h3>Dataset</h3>
+    <input class="field" id="dsfilter" type="search" placeholder="Filter, e.g. cont N2500" aria-label="Filter datasets">
+    <ul class="glist" id="glist"></ul>
+    <p class="hint" id="srcnote"></p>
+  </div>
+
+  <div class="sec">
+    <h3>Panels</h3>
+    <ul class="dslist" id="dslist"></ul>
+    <div class="row">
+      <button class="btn primary" id="addbtn" type="button">Add Auspice JSONs…</button>
+      <input type="file" id="file" accept=".json,application/json" multiple hidden>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn" id="clearbtn" type="button">Remove all</button>
+    </div>
+    <p class="hint">Add local files or drop them on the page to put extra panels under the current dataset. The top panel sets the tip order for all of them.</p>
+    <div class="err" id="err"></div>
+  </div>
+
+  <div class="sec">
+    <h3>Color By</h3>
+    <select id="colorby" aria-label="Color by"></select>
+    <div style="margin-top:10px" id="legend" class="legend"></div>
+  </div>
+
+  <div class="sec">
+    <h3>Tree</h3>
+    <label class="toggle"><input type="checkbox" id="optMut"> Show mutation events</label>
+    <label class="toggle"><input type="checkbox" id="optThick" checked> Branch width by descendant tips</label>
+    <label class="toggle"><input type="checkbox" id="optLabels" checked> Tip labels when zoomed in</label>
+    <label class="toggle"><input type="checkbox" id="optCross" checked> Hover guide across panels</label>
+    <label class="lbl" for="optH">Panel height: <span id="optHv"></span> px</label>
+    <input type="range" id="optH" min="180" max="1400" step="10" value="420">
+  </div>
+</aside>
+
+<main id="main">
+  <div id="head">
+    <h1 id="title">Stacked trees</h1>
+    <div class="sub" id="sub"></div>
+  </div>
+  <div class="bar">
+    <span class="ttl" id="zoomttl">Phylogeny · click a branch to zoom all panels to that clade</span>
+    <span class="row">
+      <button class="zbtn" id="zout" type="button" disabled>Zoom out</button>
+      <button class="zbtn" id="zroot" type="button" disabled>Zoom to root</button>
+    </span>
+  </div>
+  <div id="panels"></div>
+  <div id="empty" hidden>No trees loaded. Add Auspice v2 JSON files with the button on the left, or drop them here.</div>
+</main>
+<div id="tip"></div>
+<div id="drop">Drop Auspice JSONs to add panels</div>
+
+<script>
+"use strict";
+/* ---------- configuration ----------
+   DIR: folder of Auspice v2 JSONs in this repo.
+   GROUP: files whose names match are grouped into one dataset (group 1 = dataset id,
+   group 2 = panel name). Files that do not match become one-panel datasets.
+   ORDER: panel names listed here come first, in this order; the rest follow alphabetically. */
+const DIR = "auspice";
+const GROUP = /^(?:treevis_)?(.+?)_(true|inferred_.+)$/;
+const ORDER = ["true"];
+const PALETTE = ["#4C90C0","#E67030","#7EB876","#DF4327","#AA5EA3","#CBB742","#63AC9A","#9C8E3A","#3F52CD","#D9AD3D","#85B44E","#E39B39","#5DA8A3","#B9A13A","#C64B33","#7A62A8"];
+const UNDEF = "#BBBBBB";
+const $ = id => document.getElementById(id);
+
+const state = {
+  panels: [], colorBy: null, colorings: {}, scale: null,
+  zoom: null, hoverName: null, legendHover: null,
+  panelH: 420, showMut: false, thick: true, labels: true, cross: true
+};
+let uid = 0;
+
+/* ---------- parsing ---------- */
+function parseAuspice(json, fname) {
+  if (!json || !json.tree) throw new Error("no \"tree\" field, so it is not an Auspice v2 JSON");
+  const nodes = [];
+  const stack = [[json.tree, null]];
+  while (stack.length) {
+    const [n, parent] = stack.pop();
+    const a = n.node_attrs || {};
+    const attrs = {};
+    for (const k in a) {
+      if (k === "div") continue;
+      const v = a[k];
+      attrs[k] = (v && typeof v === "object" && "value" in v) ? v.value : v;
+    }
+    let x = typeof a.div === "number" ? a.div : (a.num_date && typeof a.num_date.value === "number" ? a.num_date.value : undefined);
+    const node = { i: nodes.length, name: n.name, parent, x, attrs, children: [] };
+    if (x === undefined) node.x = parent ? parent.x + 1 : 0;
+    nodes.push(node);
+    if (parent) parent.children.push(node);
+    const ch = n.children || [];
+    for (let j = ch.length - 1; j >= 0; j--) stack.push([ch[j], node]);
+  }
+  // nodes are in preorder; children were pushed in order because we reversed onto the stack
+  const tips = nodes.filter(n => n.children.length === 0);
+  const byName = new Map();
+  nodes.forEach(n => byName.set(n.name, n));
+  for (let k = nodes.length - 1; k >= 0; k--) {
+    const n = nodes[k];
+    if (!n.children.length) { n.tipCount = 1; n.xMaxSub = n.x; }
+    else {
+      n.tipCount = 0; n.xMaxSub = n.x;
+      for (const c of n.children) { n.tipCount += c.tipCount; if (c.xMaxSub > n.xMaxSub) n.xMaxSub = c.xMaxSub; }
+    }
+  }
+  return { id: ++uid, file: fname, meta: json.meta || {}, nodes, root: nodes[0], tips, byName, label: fname };
+}
+
+/* ---------- layout: shared tip order from the top panel ---------- */
+function layout() {
+  if (!state.panels.length) return;
+  const ref = state.panels[0];
+  const rank = new Map();
+  ref.tips.forEach((t, k) => rank.set(t.name, k));
+  for (const p of state.panels) {
+    let extra = ref.tips.length;
+    const nodes = p.nodes;
+    for (let k = nodes.length - 1; k >= 0; k--) {
+      const n = nodes[k];
+      if (!n.children.length) {
+        n.y = rank.has(n.name) ? rank.get(n.name) : extra++;
+        n.yMin = n.yMax = n.y;
+      } else {
+        let lo = Infinity, hi = -Infinity, mn = Infinity, mx = -Infinity;
+        for (const c of n.children) { lo = Math.min(lo, c.y); hi = Math.max(hi, c.y); mn = Math.min(mn, c.yMin); mx = Math.max(mx, c.yMax); }
+        n.y = (lo + hi) / 2; n.yMin = mn; n.yMax = mx;
+      }
+    }
+    p.nTipsLaid = extra;
+  }
+}
+
+/* ---------- labels from filenames ---------- */
+function relabel() {
+  const names = state.panels.map(p => p.file.replace(/\.json$/i, ""));
+  let pre = "";
+  if (names.length > 1) {
+    pre = names[0];
+    for (const n of names) { let i = 0; while (i < pre.length && i < n.length && pre[i] === n[i]) i++; pre = pre.slice(0, i); }
+    pre = pre.slice(0, pre.lastIndexOf("_") + 1);
+  }
+  state.panels.forEach((p, k) => {
+    const rest = names[k].slice(pre.length) || names[k];
+    p.label = rest.replace(/_/g, " · ");
+  });
+  const common = pre.replace(/^treevis_/, "").replace(/_+$/, "");
+  state.common = common;
+}
+
+/* ---------- colour scales ---------- */
+const hex2rgb = h => { h = h.replace("#", ""); if (h.length === 3) h = h.split("").map(c => c + c).join(""); const v = parseInt(h, 16); return [v >> 16 & 255, v >> 8 & 255, v & 255]; };
+const rgb2hex = c => "#" + c.map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
+const mix = (a, b, t) => { const A = hex2rgb(a), B = hex2rgb(b); return rgb2hex(A.map((v, i) => v + (B[i] - v) * t)); };
+
+function collectColorings() {
+  const out = {}, order = [];
+  for (const p of state.panels) {
+    for (const c of (p.meta.colorings || [])) if (!out[c.key]) { out[c.key] = c; order.push(c.key); }
+  }
+  if (!order.length && state.panels.length) {
+    for (const k in state.panels[0].nodes[0].attrs) { out[k] = { key: k, title: k, type: "categorical" }; order.push(k); }
+  }
+  state.colorings = out; state.coloringOrder = order;
+  const sel = $("colorby");
+  sel.innerHTML = order.map(k => `<option value="${esc(k)}">${esc(out[k].title || k)}</option>`).join("");
+  if (!state.colorBy || !out[state.colorBy]) {
+    const d = state.panels[0] && state.panels[0].meta.display_defaults && state.panels[0].meta.display_defaults.color_by;
+    state.colorBy = out[d] ? d : order[0];
+  }
+  sel.value = state.colorBy || "";
+}
+
+function buildScale() {
+  const key = state.colorBy, c = state.colorings[key];
+  if (!c) { state.scale = { fn: () => UNDEF, type: "none" }; return; }
+  const counts = new Map();
+  let vmin = Infinity, vmax = -Infinity;
+  for (const p of state.panels) for (const n of p.nodes) {
+    const v = n.attrs[key];
+    if (v === undefined || v === null || v === "") continue;
+    if (!n.children.length) counts.set(String(v), (counts.get(String(v)) || 0) + 1);
+    else if (!counts.has(String(v))) counts.set(String(v), 0);
+    if (typeof v === "number") { vmin = Math.min(vmin, v); vmax = Math.max(vmax, v); }
+  }
+  if (c.type === "continuous") {
+    let stops = (c.scale || []).slice().sort((a, b) => a[0] - b[0]);
+    if (stops.length < 2) stops = [[vmin, "#3a67b0"], [(vmin + vmax) / 2, "#e3cf6f"], [vmax, "#c2362b"]];
+    const fn = v => {
+      if (typeof v !== "number") return UNDEF;
+      if (v <= stops[0][0]) return stops[0][1];
+      for (let i = 1; i < stops.length; i++) if (v <= stops[i][0]) {
+        const [a, ca] = stops[i - 1], [b, cb] = stops[i];
+        return mix(ca, cb, b === a ? 0 : (v - a) / (b - a));
+      }
+      return stops[stops.length - 1][1];
+    };
+    state.scale = { type: "continuous", fn, stops, title: c.title || key };
+  } else {
+    const map = new Map((c.scale || []).map(([v, col]) => [String(v), col]));
+    const vals = [...counts.keys()].sort((a, b) => (isFinite(a) && isFinite(b)) ? a - b : a.localeCompare(b));
+    let pi = 0;
+    for (const v of vals) if (!map.has(v)) map.set(v, PALETTE[pi++ % PALETTE.length]);
+    state.scale = { type: "categorical", fn: v => (v === undefined || v === null) ? UNDEF : (map.get(String(v)) || UNDEF), vals, counts, map, title: c.title || key };
+  }
+}
+
+function renderLegend() {
+  const s = state.scale, el = $("legend");
+  if (!s || s.type === "none") { el.innerHTML = ""; return; }
+  if (s.type === "continuous") {
+    const lo = s.stops[0][0], hi = s.stops[s.stops.length - 1][0];
+    const g = s.stops.map(([v, c]) => `${c} ${((v - lo) / (hi - lo) * 100).toFixed(1)}%`).join(",");
+    el.innerHTML = `<div class="grad" style="background:linear-gradient(90deg,${g})"></div>
+      <div class="gradlab"><span>${fmt(lo)}</span><span>0</span><span>${fmt(hi)}</span></div>
+      <p class="hint">Grey: no value (for example the true tree). Colours saturate beyond the end stops.</p>`;
+    return;
+  }
+  el.innerHTML = s.vals.map(v => `<div class="it" data-v="${esc(v)}"><span class="sw" style="background:${s.map.get(v)}"></span>${esc(v)}<span class="ct">${s.counts.get(v) || ""}</span></div>`).join("") +
+    `<p class="hint">Hover a value to highlight it in every panel. Numbers are tip counts across panels.</p>`;
+}
+
+/* ---------- rendering ---------- */
+function domains() {
+  let X0 = Infinity, X1 = -Infinity, Y0, Y1, tipsInView;
+  const z = state.zoom;
+  for (const p of state.panels) {
+    const n = z ? p.byName.get(z.name) : p.root;
+    if (!n) continue;
+    let anc = n.parent; while (anc && anc.parent && anc.children.length === 1) anc = anc.parent;
+    const a = anc ? anc.x : n.x;
+    X0 = Math.min(X0, a); X1 = Math.max(X1, n.xMaxSub);
+  }
+  if (z) { Y0 = z.yMin; Y1 = z.yMax; tipsInView = z.tipCount; }
+  else { Y0 = 0; Y1 = Math.max(...state.panels.map(p => p.nTipsLaid)) - 1; tipsInView = Y1 + 1; }
+  if (X1 === X0) X1 = X0 + 1;
+  const pad = (X1 - X0) * 0.01;
+  return { X0: X0 - pad, X1, Y0: Y0 - 0.6, Y1: Y1 + 0.6, tipsInView };
+}
+
+function niceTicks(a, b, target) {
+  const span = b - a, raw = span / target, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || raw;
+  const out = [];
+  for (let v = Math.ceil(a / step) * step; v <= b + 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+
+function renderAll() {
+  const host = $("panels");
+  $("empty").hidden = state.panels.length > 0;
+  if (!state.panels.length) { host.innerHTML = ""; return; }
+  const D = domains();
+  const beforePresent = Math.max(...state.panels.map(p => p.root.xMaxSub)) <= 1e-9;
+  state.beforePresent = beforePresent;
+  // build panel containers if needed
+  const want = state.panels.map(p => p.id).join(",");
+  if (host.dataset.ids !== want) {
+    host.innerHTML = state.panels.map(p => `
+      <section class="panel" data-id="${p.id}">
+        <div class="ph"><span class="chip">${esc(p.label)}</span><div><div class="ptitle">${esc(p.meta.title || p.file)}</div>${p.meta.description ? `<div class="pdesc">${esc(p.meta.description)}</div>` : ""}</div></div>
+        <div class="pw"><svg role="img" aria-label="Phylogeny: ${esc(p.label)}"></svg></div>
+      </section>`).join("");
+    host.dataset.ids = want;
+    host.querySelectorAll(".pw svg").forEach(svg => attachEvents(svg));
+  }
+  host.querySelectorAll(".panel").forEach((sec, k) => renderPanel(state.panels[k], sec.querySelector("svg"), D));
+  const z = state.zoom;
+  $("zout").disabled = $("zroot").disabled = !z;
+  $("zoomttl").textContent = z ? `Zoomed to clade ${z.name} · ${z.tipCount} tips · click a branch to zoom further` : "Phylogeny · click a branch to zoom all panels to that clade";
+}
+
+function renderPanel(p, svg, D) {
+  const W = Math.max(320, svg.parentNode.clientWidth), H = state.panelH;
+  const showLabels = state.labels && D.tipsInView <= 70;
+  const m = { l: 10, r: showLabels ? 110 : 16, t: 10, b: 30 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const sx = v => m.l + (v - D.X0) / (D.X1 - D.X0) * iw;
+  const sy = v => m.t + (v - D.Y0) / (D.Y1 - D.Y0) * ih;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("height", H);
+  const key = state.colorBy, col = state.scale.fn;
+  const lh = state.legendHover;
+  const tot = D.tipsInView;
+  const wid = n => state.thick ? (1 + 5.5 * Math.sqrt(Math.min(1, n.tipCount / tot))) : 1.5;
+  const dim = n => lh !== null && String(n.attrs[key]) !== lh;
+  const s = [];
+  // grid + axis
+  const ticks = niceTicks(D.X0, D.X1, Math.max(3, Math.round(iw / 110)));
+  s.push(`<g class="axis">`);
+  for (const t of ticks) {
+    const x = sx(t).toFixed(1);
+    s.push(`<line x1="${x}" x2="${x}" y1="${m.t}" y2="${H - m.b}" stroke="#eee"/>`);
+    s.push(`<text x="${x}" y="${H - m.b + 15}" text-anchor="middle">${fmtTick(state.beforePresent ? -t : t)}</text>`);
+  }
+  s.push(`<text x="${W - m.r}" y="${H - 3}" text-anchor="end">${state.beforePresent ? "generations before present" : "divergence"}</text></g>`);
+  s.push(`<defs><clipPath id="clip${p.id}"><rect x="0" y="${m.t - 6}" width="${W}" height="${ih + 12}"/></clipPath></defs><g clip-path="url(#clip${p.id})" fill="none">`);
+  const vis = [], tipsS = [], labS = [], mutS = [];
+  for (const n of p.nodes) {
+    if (n.yMax < D.Y0 || n.yMin > D.Y1) continue;
+    const c = col(n.attrs[key]), w = wid(n), x = sx(n.x), y = sy(n.y);
+    const op = dim(n) ? ` stroke-opacity="0.15"` : "";
+    const px = n.parent ? sx(n.parent.x) : x;
+    if (n.parent) s.push(`<path d="M${px.toFixed(1)} ${y.toFixed(1)}H${x.toFixed(1)}" stroke="${c}" stroke-width="${w.toFixed(2)}"${op}/>`);
+    if (n.children.length > 1) {
+      let lo = Infinity, hi = -Infinity;
+      for (const ch of n.children) { lo = Math.min(lo, ch.y); hi = Math.max(hi, ch.y); }
+      s.push(`<path d="M${x.toFixed(1)} ${sy(lo).toFixed(1)}V${sy(hi).toFixed(1)}" stroke="${c}" stroke-width="${w.toFixed(2)}" stroke-linecap="square"${op}/>`);
+    }
+    vis.push({ n, x, y, px, w });
+    if (!n.children.length && n.y >= D.Y0 && n.y <= D.Y1) {
+      const r = tot > 400 ? 2.6 : tot > 100 ? 3.4 : 4.2;
+      const o = dim(n) ? ` opacity="0.15"` : "";
+      tipsS.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${mix(c, "#ffffff", .25)}" stroke="${mix(c, "#000000", .2)}" stroke-width="1"${o}/>`);
+      if (showLabels) labS.push(`<text x="${(x + r + 4).toFixed(1)}" y="${(y + 3.5).toFixed(1)}" font-size="11" fill="#555">${esc(n.name)}</text>`);
+    } else if (state.showMut && n.children.length === 1) {
+      mutS.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.3" fill="#fff" stroke="${c}" stroke-width="1.4"/>`);
+    }
+  }
+  s.push(mutS.join(""), tipsS.join(""), labS.join(""), `</g><g class="ov" pointer-events="none"></g>`);
+  svg.innerHTML = s.join("");
+  p.view = { vis, sx, sy, m, W, H, D };
+  drawOverlay(p, svg);
+}
+
+/* ---------- hover / click ---------- */
+function nearest(p, mx, my) {
+  let best = null, bd = 9;
+  for (const v of p.view.vis) {
+    const dx = mx < v.px ? v.px - mx : mx > v.x ? mx - v.x : 0;
+    const dy = Math.abs(my - v.y);
+    if (dy > bd) continue;
+    const d = Math.hypot(dx, dy);
+    if (d < bd) { bd = d; best = v.n; }
+  }
+  return best;
+}
+function svgPoint(svg, e) {
+  const r = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal;
+  return [(e.clientX - r.left) * vb.width / r.width, (e.clientY - r.top) * vb.height / r.height];
+}
+function panelOf(svg) { const id = +svg.closest(".panel").dataset.id; return state.panels.find(p => p.id === id); }
+
+function attachEvents(svg) {
+  svg.addEventListener("mousemove", e => {
+    const p = panelOf(svg); if (!p || !p.view) return;
+    const [mx, my] = svgPoint(svg, e);
+    const n = nearest(p, mx, my);
+    const name = n ? n.name : null;
+    if (name !== state.hoverName) { state.hoverName = name; overlays(); }
+    showTip(n, p, e);
+  });
+  svg.addEventListener("mouseleave", () => { state.hoverName = null; overlays(); $("tip").style.display = "none"; });
+  svg.addEventListener("click", e => {
+    const p = panelOf(svg); if (!p || !p.view) return;
+    const [mx, my] = svgPoint(svg, e);
+    let n = nearest(p, mx, my);
+    if (!n) return;
+    if (!n.children.length) { n = n.parent; while (n && n.children.length === 1) n = n.parent; }
+    if (!n) return;
+    zoomTo(n);
+  });
+}
+function zoomTo(n) {
+  if (!n.parent) state.zoom = null;
+  else state.zoom = { name: n.name, yMin: n.yMin, yMax: n.yMax, tipCount: n.tipCount };
+  state.hoverName = null; $("tip").style.display = "none";
+  renderAll();
+}
+function zoomOut() {
+  if (!state.zoom) return;
+  for (const p of state.panels) {
+    const n = p.byName.get(state.zoom.name);
+    if (!n) continue;
+    let q = n.parent; while (q && q.parent && q.children.length === 1) q = q.parent;
+    zoomTo(q || p.root); return;
+  }
+  state.zoom = null; renderAll();
+}
+
+function overlays() {
+  document.querySelectorAll("#panels .panel").forEach((sec, k) => drawOverlay(state.panels[k], sec.querySelector("svg")));
+}
+function drawOverlay(p, svg) {
+  const g = svg.querySelector(".ov"); if (!g) return;
+  const name = state.hoverName;
+  if (!name || !p.view) { g.innerHTML = ""; return; }
+  const n = p.byName.get(name);
+  if (!n) { g.innerHTML = ""; return; }
+  const { sx, sy, m, H } = p.view;
+  const x = sx(n.x), y = sy(n.y), px = n.parent ? sx(n.parent.x) : x;
+  let h = "";
+  if (state.cross) {
+    h += `<line x1="${x}" x2="${x}" y1="${m.t}" y2="${H - m.b}" stroke="#333" stroke-dasharray="3 3" stroke-width="1"/>`;
+    const t = state.beforePresent ? -n.x : n.x;
+    const lab = fmt(t) + (state.beforePresent ? " gens" : "");
+    const anchor = x > p.view.W - 90 ? "end" : "start";
+    const dx = anchor === "end" ? -5 : 5;
+    h += `<text x="${x + dx}" y="${m.t + 11}" font-size="11" font-weight="700" fill="#333" text-anchor="${anchor}" paint-order="stroke" stroke="#fff" stroke-width="3">${lab}</text>`;
+  }
+  if (n.parent) h += `<path d="M${px} ${y}H${x}" stroke="#222" stroke-width="2" fill="none" stroke-opacity=".7"/>`;
+  h += `<circle cx="${x}" cy="${y}" r="5.5" fill="none" stroke="#222" stroke-width="1.6"/>`;
+  g.innerHTML = h;
+}
+
+function showTip(n, p, e) {
+  const el = $("tip");
+  if (!n) { el.style.display = "none"; return; }
+  const key = state.colorBy;
+  const type = n.attrs.node_type || (n.children.length ? (n.children.length === 1 ? "mutation" : "coalescence") : "tip");
+  const truth = state.panels.find(q => /(^|·\s)true\b/.test(q.label));
+  const tn = truth && truth.byName.get(n.name);
+  const rows = state.panels.map(q => {
+    const m = q.byName.get(n.name);
+    if (!m) return `<tr><td>${esc(q.label)}</td><td class="n m">–</td><td></td></tr>`;
+    const t = state.beforePresent ? -m.x : m.x;
+    const d = tn && q !== truth ? (state.beforePresent ? -(m.x - tn.x) : m.x - tn.x) : null;
+    const c = state.scale.fn(m.attrs[key]);
+    return `<tr${q === p ? ` class="h"` : ""}><td><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${c};margin-right:5px"></span>${esc(q.label)}</td><td class="n">${fmt(t)}</td><td class="n m">${d === null ? "" : (d > 0 ? "+" : "") + fmt(d)}</td></tr>`;
+  }).join("");
+  const extras = Object.entries(n.attrs).filter(([k]) => k !== "node_type").map(([k, v]) => `<div><span class="m">${esc((state.colorings[k] && state.colorings[k].title) || k)}:</span> ${esc(typeof v === "number" ? fmt(v) : String(v))}</div>`).join("");
+  el.innerHTML = `<div class="h">${esc(n.name)} <span class="m" style="font-weight:400">· ${esc(type)}${n.children.length ? ` · ${n.tipCount} tips` : ""}</span></div>
+    ${extras}
+    <table><tr class="m"><td>${state.beforePresent ? "time (gens ago)" : "divergence"}</td><td class="n">value</td><td class="n">${tn ? "vs true" : ""}</td></tr>${rows}</table>
+    <div class="m" style="margin-top:4px">${n.children.length ? "Click to zoom to this clade" : "Click to zoom to the parent clade"}</div>`;
+  el.style.display = "block";
+  const r = el.getBoundingClientRect();
+  let lx = e.clientX + 16, ly = e.clientY + 14;
+  if (lx + r.width > innerWidth - 8) lx = e.clientX - r.width - 16;
+  if (ly + r.height > innerHeight - 8) ly = Math.max(8, innerHeight - r.height - 8);
+  el.style.left = lx + "px"; el.style.top = ly + "px";
+}
+
+/* ---------- sidebar ---------- */
+function renderSide() {
+  $("dslist").innerHTML = state.panels.map((p, k) => `
+    <li data-k="${k}"><span class="nm" title="${esc(p.file)}">${esc(p.label)}</span>${k === 0 ? `<span class="ref" title="Tip order comes from this tree">order</span>` : ""}
+    <button class="ib" data-act="up" aria-label="Move ${esc(p.label)} up" ${k === 0 ? "disabled" : ""}>↑</button>
+    <button class="ib" data-act="down" aria-label="Move ${esc(p.label)} down" ${k === state.panels.length - 1 ? "disabled" : ""}>↓</button>
+    <button class="ib" data-act="rm" aria-label="Remove ${esc(p.label)}">✕</button></li>`).join("");
+  const c = state.common;
+  const crumbs = c ? c.split("_").join(" / ") : "";
+  $("crumb").textContent = src.owner ? `${src.owner} / ${src.repo}${crumbs ? " / " + crumbs : ""}` : crumbs;
+  $("title").textContent = crumbs ? crumbs.replace(/^(\w)/, s => s.toUpperCase()) : (state.panels.length === 1 ? state.panels[0].label : "Stacked trees");
+  const counts = [...new Set(state.panels.map(p => p.tips.length))];
+  $("sub").textContent = state.panels.length ? `Showing ${state.panels.length} tree${state.panels.length > 1 ? "s" : ""} · ${counts.join(" / ")} tips each · aligned on one time axis` : "";
+}
+
+function refresh(full = true) {
+  if (full) { relabel(); layout(); collectColorings(); state.zoom = state.zoom && state.panels.some(p => p.byName.has(state.zoom.name)) ? state.zoom : null; }
+  buildScale(); renderLegend(); renderSide(); renderAll();
+}
+
+$("dslist").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  const k = +b.closest("li").dataset.k, P = state.panels;
+  if (b.dataset.act === "up" && k > 0) [P[k - 1], P[k]] = [P[k], P[k - 1]];
+  if (b.dataset.act === "down" && k < P.length - 1) [P[k + 1], P[k]] = [P[k], P[k + 1]];
+  if (b.dataset.act === "rm") P.splice(k, 1);
+  if (state.zoom && P.length) { // keep the zoomed clade but recompute its tip range from the new order
+    layout(); const n = P.map(p => p.byName.get(state.zoom.name)).find(Boolean);
+    state.zoom = n ? { name: n.name, yMin: n.yMin, yMax: n.yMax, tipCount: n.tipCount } : null;
+  }
+  refresh();
+});
+$("colorby").addEventListener("change", e => { state.colorBy = e.target.value; state.legendHover = null; buildScale(); renderLegend(); renderAll(); });
+$("legend").addEventListener("mouseover", e => { const it = e.target.closest(".it"); const v = it ? it.dataset.v : null; if (v !== state.legendHover) { state.legendHover = v; renderAll(); } });
+$("legend").addEventListener("mouseleave", () => { if (state.legendHover !== null) { state.legendHover = null; renderAll(); } });
+$("optMut").addEventListener("change", e => { state.showMut = e.target.checked; renderAll(); });
+$("optThick").addEventListener("change", e => { state.thick = e.target.checked; renderAll(); });
+$("optLabels").addEventListener("change", e => { state.labels = e.target.checked; renderAll(); });
+$("optCross").addEventListener("change", e => { state.cross = e.target.checked; overlays(); });
+$("optH").addEventListener("input", e => { state.panelH = +e.target.value; $("optHv").textContent = state.panelH; renderAll(); });
+$("zroot").addEventListener("click", () => { state.zoom = null; renderAll(); });
+$("zout").addEventListener("click", zoomOut);
+$("addbtn").addEventListener("click", () => $("file").click());
+$("file").addEventListener("change", e => { addFiles(e.target.files); e.target.value = ""; });
+$("clearbtn").addEventListener("click", () => { state.panels = []; state.zoom = null; refresh(); });
+let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(renderAll, 120); });
+
+/* drag and drop */
+let dragDepth = 0;
+addEventListener("dragenter", e => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { dragDepth++; $("drop").style.display = "flex"; e.preventDefault(); } });
+addEventListener("dragover", e => e.preventDefault());
+addEventListener("dragleave", () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $("drop").style.display = "none"; });
+addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; $("drop").style.display = "none"; if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+
+async function addFiles(files) {
+  const errs = [];
+  for (const f of [...files].sort((a, b) => a.name.localeCompare(b.name))) {
+    try { state.panels.push(parseAuspice(JSON.parse(await f.text()), f.name)); }
+    catch (err) { errs.push(`Couldn't read ${f.name}: ${err.message}.`); }
+  }
+  $("err").textContent = errs.join(" ");
+  refresh();
+}
+/* ---------- datasets from the repo ---------- */
+const src = { owner: null, repo: null, groups: [], current: null };
+function detectRepo() {
+  const h = location.hostname;
+  if (h.endsWith(".github.io")) {
+    src.owner = h.split(".")[0];
+    src.repo = location.pathname.split("/").filter(Boolean)[0] || h;
+  }
+}
+async function listFiles() {
+  if (src.owner) {
+    const r = await fetch(`https://api.github.com/repos/${src.owner}/${src.repo}/contents/${DIR}`, { cache: "no-cache" });
+    if (r.status === 403) throw new Error("GitHub's API limit for listing files was reached (60 per hour per network). Try again later.");
+    if (!r.ok) throw new Error(`GitHub API returned ${r.status} for ${src.owner}/${src.repo}/${DIR}`);
+    return (await r.json()).filter(f => f.type === "file" && /\.json$/i.test(f.name)).map(f => f.name);
+  }
+  // local preview, e.g. `python3 -m http.server` from the repo root: parse the directory listing
+  const r = await fetch(DIR + "/", { cache: "no-cache" });
+  if (!r.ok) throw new Error(`couldn't list ${DIR}/ (${r.status})`);
+  const html = await r.text();
+  return [...new Set([...html.matchAll(/href="([^"?#]+\.json)"/gi)].map(m => decodeURIComponent(m[1].split("/").pop())))];
+}
+function groupFiles(names) {
+  const map = new Map();
+  for (const f of names) {
+    const base = f.replace(/\.json$/i, "");
+    const m = base.match(GROUP);
+    const id = (m ? m[1] : base).split("_").join("/");
+    const variant = m ? m[2] : base;
+    if (!map.has(id)) map.set(id, []);
+    map.get(id).push({ file: f, variant });
+  }
+  const rank = v => { const i = ORDER.indexOf(v); return i < 0 ? ORDER.length : i; };
+  const groups = [...map.entries()].map(([id, files]) => ({
+    id, files: files.sort((a, b) => rank(a.variant) - rank(b.variant) || a.variant.localeCompare(b.variant))
+  }));
+  return groups.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+}
+function renderGroups() {
+  const q = $("dsfilter").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = src.groups.filter(g => q.every(w => g.id.toLowerCase().includes(w)));
+  $("glist").innerHTML = shown.map(g => `<li><a href="#${esc(g.id)}" class="${src.current === g.id ? "on" : ""}">${esc(g.id.split("/").join(" / "))}<span class="n">${g.files.length}</span></a></li>`).join("") ||
+    `<li style="padding:6px 8px;font-size:12px;color:var(--muted)">No datasets match.</li>`;
+}
+async function openGroup(id) {
+  const g = src.groups.find(x => x.id === id) || src.groups[0];
+  if (!g) return;
+  src.current = g.id; renderGroups();
+  $("err").textContent = "";
+  $("zoomttl").textContent = "Loading " + g.id + "…";
+  try {
+    const got = await Promise.all(g.files.map(f => fetch(`${DIR}/${encodeURIComponent(f.file)}`).then(r => { if (!r.ok) throw new Error(`${f.file} returned ${r.status}`); return r.json(); })));
+    if (src.current !== g.id) return; // user moved on
+    state.panels = got.map((j, k) => parseAuspice(j, g.files[k].file));
+    state.zoom = null;
+  } catch (err) { $("err").textContent = "Couldn't load " + g.id + ": " + err.message; }
+  refresh();
+  const a = $("glist").querySelector("a.on"); if (a) a.scrollIntoView({ block: "nearest" });
+}
+async function init() {
+  detectRepo();
+  $("srcnote").textContent = src.owner ? `Reading ${DIR}/ in github.com/${src.owner}/${src.repo}. New files appear about a minute after you push.` : `Reading ${DIR}/ next to this page.`;
+  try { src.groups = groupFiles(await listFiles()); }
+  catch (err) { $("err").textContent = "Couldn't list the trees: " + err.message; refresh(); return; }
+  if (!src.groups.length) { $("err").textContent = `No .json files found in ${DIR}/.`; refresh(); return; }
+  const want = decodeURIComponent(location.hash.slice(1));
+  openGroup(src.groups.some(g => g.id === want) ? want : src.groups[0].id);
+}
+addEventListener("hashchange", () => { const id = decodeURIComponent(location.hash.slice(1)); if (id && id !== src.current) openGroup(id); });
+$("dsfilter").addEventListener("input", renderGroups);
+
+/* ---------- utils ---------- */
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function fmt(v) { if (typeof v !== "number" || !isFinite(v)) return String(v); const a = Math.abs(v); return a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toPrecision(3); }
+function fmtTick(v) { return Math.abs(v) < 1e-9 ? "0" : (+v.toFixed(6)).toLocaleString("en-GB"); }
+
+state.panelH = Math.round(Math.max(280, Math.min(600, (innerHeight - 170) / 3 - 46)) / 10) * 10;
+$("optH").value = state.panelH;
+$("optHv").textContent = state.panelH;
+init();
+</script>
+</body>
+</html>
