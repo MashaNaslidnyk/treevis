@@ -89,9 +89,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .plegend b { display: inline-block; width: 16px; height: 2px; border-radius: 1px; }
 .pgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 28px; }
 .pgrid svg { display: block; overflow: visible; }
-#lttplot svg { display: block; width: 100%; }
-.pgrid text, #lttplot text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
-.pgrid text.ink, #lttplot text.ink { fill: var(--ink); font-size: 12px; }
+#lttplot svg, #skyplot svg { display: block; width: 100%; }
+.pgrid text, #lttplot text, #skyplot text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.pgrid text.ink, #lttplot text.ink, #skyplot text.ink { fill: var(--ink); font-size: 12px; }
 .pgrid h4 { margin: 0; font-size: 14px; font-weight: 700; }
 .pgrid h4 span { font-weight: 400; color: var(--muted); margin-left: 4px; }
 .chip { flex: 0 0 auto; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; padding: 3px 7px; border-radius: 3px; background: #eef4f8; color: var(--accent); }
@@ -100,7 +100,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .pw { position: relative; }
 .pw svg { display: block; width: 100%; cursor: pointer; user-select: none; }
 .axis text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
-#tip { position: fixed; pointer-events: none; z-index: 10; background: #fff; border: 1px solid #ddd; box-shadow: 0 2px 10px rgba(0,0,0,.12); border-radius: 4px; padding: 8px 10px; font-size: 12px; line-height: 1.45; max-width: 340px; display: none; }
+#tip { position: fixed; pointer-events: none; z-index: 10; background: #fff; border: 1px solid #ddd; box-shadow: 0 2px 10px rgba(0,0,0,.12); border-radius: 4px; padding: 8px 10px; font-size: 12px; line-height: 1.45; max-width: 480px; display: none; }
 #tip table { border-collapse: collapse; margin-top: 4px; font-variant-numeric: tabular-nums; }
 #tip td { padding: 1px 8px 1px 0; }
 #tip td.n { text-align: right; }
@@ -183,6 +183,18 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
       <h2>Parameters</h2>
       <p class="hint">Posterior mean (dot) and 95% interval (bar) for each inferred tree. The dashed line is the true value. The neutral model has no s, and its N is an effective size, N<sub>e</sub>.</p>
       <div class="pgrid" id="paramplot"></div>
+    </div>
+    <div class="plot">
+      <div class="bar" style="margin:0"><h2>Effective population size through time</h2>
+        <span class="row" style="align-items:center;gap:14px">
+          <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px">Bin width (generations)
+            <input id="binSize" type="number" min="0.1" step="any" value="10" class="field" style="width:80px"></label>
+          <label class="toggle" style="margin:0"><input type="checkbox" id="optTheory" checked> Theory</label>
+          <label class="toggle" style="margin:0"><input type="checkbox" id="optSkyLog"> Log scale</label>
+        </span></div>
+      <p class="hint" id="skyhint"></p>
+      <div class="plegend" id="skylegend"></div>
+      <div id="skyplot"></div>
     </div>
     <div class="plot">
       <div class="bar" style="margin:0"><h2>Lineages through time</h2>
@@ -568,102 +580,209 @@ function renderParams() {
 $("paramplot").addEventListener("mousemove", e => { const g = e.target.closest("[data-tip]"); if (g) tipShow(g.dataset.tip, e); else $("tip").style.display = "none"; });
 $("paramplot").addEventListener("mouseleave", () => { $("tip").style.display = "none"; });
 
-/* lineages through time: number of branches alive at each time; unary (mutation) nodes don't change it */
-function lttSteps(start) {
+/* time plots: N_e(t) skyline (default) or lineages through time.
+   Both are built from the tree's events: a tip adds a lineage, a coalescence of c+1 children removes c,
+   unary (mutation) nodes change nothing. */
+function treeEvents(start) {
   const ev = [], st = [start];
   while (st.length) {
     const n = st.pop();
-    if (!n.children.length) ev.push([n.x, 1]);
-    else if (n.children.length > 1) ev.push([n.x, -(n.children.length - 1)]);
+    if (!n.children.length) ev.push([n.x, 1, 0]);
+    else if (n.children.length > 1) ev.push([n.x, -(n.children.length - 1), n.children.length - 1]);
     for (const c of n.children) st.push(c);
   }
   ev.sort((a, b) => b[0] - a[0]); // present first, going back in time
-  const xs = [], ks = []; let cur = 0;
+  const xs = [], ks = [], cs = []; let cur = 0;
   for (let i = 0; i < ev.length;) {
-    const x = ev[i][0];
-    while (i < ev.length && ev[i][0] === x) cur += ev[i++][1];
-    xs.push(x); ks.push(cur); // count from x back to the next (older) event
+    const x = ev[i][0]; let c = 0;
+    while (i < ev.length && ev[i][0] === x) { cur += ev[i][1]; c += ev[i][2]; i++; }
+    xs.push(x); ks.push(cur); cs.push(c); // ks[i] lineages from xs[i] back to xs[i+1]; cs[i] coalescences at xs[i]
   }
-  return { xs, ks, rootX: start.x };
+  return { xs, ks, cs, rootX: start.x };
 }
-function lttAt(L, x) {
-  if (x > L.xs[0] || x < L.rootX) return null;
-  let lo = 0, hi = L.xs.length - 1;
-  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (L.xs[mid] >= x) lo = mid; else hi = mid - 1; }
-  return L.ks[lo];
+/* observed N_e(t) in fixed-width time bins (aligned to the present): for each bin,
+   N_e = sum over intervals of C(k,2)·(time spent in the bin) ÷ coalescences in the bin.
+   This is the maximum-likelihood N_e for that bin under a coalescent with piecewise-constant size; it is the
+   inverse of the observed per-pair coalescence rate. Bins with no coalescence have no estimate and are skipped. */
+function fixedBins(E, w) {
+  const expo = new Map(), cnt = new Map();
+  const add = (mp, j, v) => mp.set(j, (mp.get(j) || 0) + v);
+  const binOf = t => Math.max(0, Math.ceil(t / w - 1e-9) - 1); // t in (j·w, (j+1)·w] -> j, t = 0 -> 0
+  for (let i = 0; i + 1 < E.xs.length; i++) {
+    const k = E.ks[i], c2 = k * (k - 1) / 2;
+    const ta = -E.xs[i], tb = -E.xs[i + 1]; // interval [ta, tb] in time before present
+    if (c2 > 0 && tb > ta) {
+      for (let j = Math.floor(ta / w); j * w < tb; j++) {
+        const lo = Math.max(ta, j * w), hi = Math.min(tb, (j + 1) * w);
+        if (hi > lo) add(expo, j, c2 * (hi - lo));
+      }
+    }
+    if (E.cs[i + 1]) add(cnt, binOf(tb), E.cs[i + 1]);
+  }
+  const out = [];
+  for (const [j, n] of [...cnt.entries()].sort((a, b) => a[0] - b[0])) {
+    const ex = expo.get(j) || 0;
+    if (ex > 0) out.push({ x0: -j * w, x1: -(j + 1) * w, v: ex / n, n });
+  }
+  return out;
 }
-function renderLTT(D) {
-  const host = $("lttplot");
+/* Nicolaisen & Desai (2012) eq. 7/11: N_e(t) = N exp(-(Ud/s)(1 - e^{-st})^2), t in generations before present */
+function theoryFor(p, truth) {
+  const est = paramsOf(p).est;
+  if (isTrue(p)) {
+    if ([truth.Ud, truth.s, truth.N].every(v => isFinite(v))) return { Ud: truth.Ud, s: truth.s, N: truth.N, what: "true Ud, s, N" };
+    return null;
+  }
+  if (est.Ud && est.s && est.N) return { Ud: est.Ud.mean, s: est.s.mean, N: est.N.mean, what: "posterior means" };
+  if (est.N_e) return { flat: est.N_e.mean, what: "constant Nₑ (posterior mean)" };
+  if (est.N) return { flat: est.N.mean, what: "constant N (posterior mean)" };
+  return null;
+}
+function theoryAt(th, t) {
+  if (th.flat !== undefined) return th.flat;
+  const u = 1 - Math.exp(-th.s * Math.max(0, t));
+  return th.N * Math.exp(-(th.Ud / th.s) * u * u);
+}
+function niceStep(x) { const mag = 10 ** Math.floor(Math.log10(x)); return [1, 2, 2.5, 5, 10].map(f => f * mag).find(v => v >= x) || x; }
+function stepAt(steps, x) { // steps: [{x0 (younger), x1 (older), v}]
+  for (const s of steps) if (x <= s.x0 && x >= s.x1) return s;
+  return null;
+}
+const TP = { skyline: { host: "skyplot", hint: "skyhint", legend: "skylegend", log: "optSkyLog" },
+             ltt: { host: "lttplot", hint: "ltthint", legend: "lttlegend", log: "optLog" } };
+function renderTimePlot(D, mode) {
+  const ids = TP[mode], host = $(ids.host);
   const z = state.zoom;
+  if (mode === "skyline" && state.autoBin) {
+    const h = Math.max(...state.panels.map(p => p.root.xMaxSub - p.root.x));
+    $("binSize").value = niceStep(h / 60); state.autoBin = false;
+  }
+  const w = Math.max(1e-6, +$("binSize").value || 10);
+  const truth = {}; for (const p of state.panels) Object.assign(truth, paramsOf(p).tru);
+  const showTh = mode === "skyline" && $("optTheory").checked;
   const series = state.panels.map(p => {
     const n = z ? p.byName.get(z.name) : p.root;
-    return n ? { p, L: lttSteps(n), c: seriesColor(p) } : null;
+    if (!n) return null;
+    const E = treeEvents(n);
+    let steps;
+    if (mode === "skyline") steps = fixedBins(E, w);
+    else steps = E.xs.map((x, i) => ({ x0: x, x1: i + 1 < E.xs.length ? E.xs[i + 1] : E.rootX, v: E.ks[i] })).filter(s => s.v > 0);
+    return { p, E, steps, c: seriesColor(p), th: mode === "skyline" ? theoryFor(p, truth) : null };
   }).filter(Boolean);
-  $("ltthint").textContent = (z ? `Within clade ${z.name} (${z.tipCount} tips). ` : "") +
-    "Each line counts the branches alive at each time: a tip adds a lineage, a coalescence removes one. The time axis lines up with the trees above.";
-  $("lttlegend").innerHTML = series.map(s => `<span><b style="background:${s.c}"></b>${esc(s.p.label)}</span>`).join("");
-  const W = Math.max(320, host.clientWidth || $("panels").clientWidth), H = 280;
+  const where = z ? `Within clade ${z.name} (${z.tipCount} tips). ` : "";
+  $(ids.hint).innerHTML = where + (mode === "skyline"
+    ? `Solid: observed N<sub>e</sub>(t) from each tree, in ${fmtTick(w)}-generation bins: Σ C(k,2)·Δt ÷ coalescences in the bin, where k is the number of lineages (the inverse of the observed per-pair coalescence rate). Bins with no coalescence are skipped, so the line jumps across them. Dashed: theory, N<sub>e</sub>(t) = N·exp(−(U<sub>d</sub>/s)(1−e<sup>−st</sup>)²) (Nicolaisen &amp; Desai 2012, Fig. 3), using the true values for the true tree and the posterior means for backsel. The neutral fit's theory is its constant N<sub>e</sub>.`
+    : "Each line counts the branches alive at each time: a tip adds a lineage, a coalescence removes one.") + " The time axis lines up with the trees above.";
+  $(ids.legend).innerHTML = series.map(s => `<span><b style="background:${s.c}"></b>${esc(s.p.label)}</span>`).join("") +
+    (showTh ? `<span style="color:var(--muted)">solid: observed</span><span style="color:var(--muted)"><b style="height:0;border-top:2px dashed #888;background:none"></b>dashed: theory</span>` : "");
+  const W = Math.max(320, host.clientWidth || $("panels").clientWidth), H = 300;
   const showLabels = state.labels && D.tipsInView <= 70;
-  const m = { l: 10, r: showLabels ? 110 : 16, t: 12, b: 30 };
+  const m = { l: 10, r: showLabels ? 110 : 16, t: 14, b: 30 };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
-  const log = $("optLog").checked;
-  const kmax = Math.max(2, ...series.map(s => Math.max(...s.L.ks)));
+  const log = $(ids.log).checked;
+  const all = series.flatMap(s => s.steps.map(t => t.v)).filter(v => v > 0 && isFinite(v));
+  let vmin = all.length ? Math.min(...all) : 1, vmax = all.length ? Math.max(...all) : 2;
+  if (mode === "ltt") vmin = 1;
+  if (showTh) { // keep the theory in view and don't let a few noisy bins squash everything
+    const tv = [];
+    for (const s of series) if (s.th) for (let i = 0; i <= 40; i++) tv.push(theoryAt(s.th, -(D.X0 + (D.X1 - D.X0) * i / 40)));
+    if (tv.length) {
+      const tmax = Math.max(...tv), tmin = Math.min(...tv);
+      vmin = Math.min(vmin, tmin);
+      const sorted = all.slice().sort((a, b) => a - b), q95 = sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : tmax;
+      vmax = Math.max(tmax, Math.min(vmax, Math.max(q95, 2.5 * tmax)));
+    }
+  }
+  if (log) { vmin = vmin / 1.25; vmax = vmax * 1.25; } else { vmin = 0; vmax = vmax * 1.08; }
+  if (vmax <= vmin) vmax = vmin * 2 || 1;
   const sx = v => m.l + (v - D.X0) / (D.X1 - D.X0) * iw;
-  const sy = log ? (k => m.t + ih - Math.log(k) / Math.log(kmax) * ih) : (k => m.t + ih - k / kmax * ih);
+  const sy = log ? (v => m.t + ih - (Math.log(Math.max(v, vmin)) - Math.log(vmin)) / (Math.log(vmax) - Math.log(vmin)) * ih)
+                 : (v => m.t + ih - (v - vmin) / (vmax - vmin) * ih);
   const g = [];
   for (const t of niceTicks(D.X0, D.X1, Math.max(3, Math.round(iw / 110))))
     g.push(`<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="#eee"/><text x="${sx(t)}" y="${H - m.b + 15}" text-anchor="middle">${fmtTick(state.beforePresent ? -t : t)}</text>`);
-  const yt = log ? [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000].filter(v => v <= kmax) : niceTicks(0, kmax, 4);
-  for (const k of yt) g.push(`<line x1="${m.l}" x2="${W - m.r}" y1="${sy(Math.max(k, log ? 1 : 0))}" y2="${sy(Math.max(k, log ? 1 : 0))}" stroke="#f0f0f0"/><text x="${m.l + 2}" y="${sy(Math.max(k, log ? 1 : 0)) - 3}">${fmtTick(k)}</text>`);
+  let yt;
+  if (log) {
+    yt = [];
+    for (let e = Math.floor(Math.log10(vmin)); e <= Math.ceil(Math.log10(vmax)); e++) for (const f of [1, 2, 5]) { const v = f * 10 ** e; if (v >= vmin && v <= vmax) yt.push(v); }
+  } else yt = niceTicks(vmin, vmax, 4);
+  for (const v of yt.filter(v => sy(v) > m.t + 12)) g.push(`<line x1="${m.l}" x2="${W - m.r}" y1="${sy(v)}" y2="${sy(v)}" stroke="#f0f0f0"/><text x="${m.l + 2}" y="${sy(v) - 3}">${fmtTick(v)}</text>`);
   g.push(`<text x="${W - m.r}" y="${H - 3}" text-anchor="end">${state.beforePresent ? "generations before present" : "divergence"}</text>`);
-  g.push(`<defs><clipPath id="lttclip"><rect x="${m.l}" y="0" width="${iw + 6}" height="${H}"/></clipPath></defs><g clip-path="url(#lttclip)" fill="none">`);
+  g.push(`<text class="ink" x="${m.l + 2}" y="${m.t - 2}">${mode === "skyline" ? "Nₑ(t)" : "lineages"}${log ? " · log scale" : ""}</text>`);
+  g.push(`<defs><clipPath id="clip-${mode}"><rect x="${m.l}" y="0" width="${iw + 6}" height="${H}"/></clipPath></defs><g clip-path="url(#clip-${mode})" fill="none">`);
   for (const s of series.slice().sort((a, b) => isTrue(b.p) - isTrue(a.p))) { // true underneath
-    const { xs, ks, rootX } = s.L;
-    let d = `M${sx(xs[0]).toFixed(1)} ${sy(Math.max(1, ks[0])).toFixed(1)}`;
-    for (let i = 1; i < xs.length; i++) d += `H${sx(xs[i]).toFixed(1)}V${sy(Math.max(1, ks[i])).toFixed(1)}`;
-    d += `H${sx(rootX).toFixed(1)}`;
+    if (!s.steps.length) continue;
+    if (mode === "skyline") {
+      if (showTh && s.th) {
+        let d = "";
+        for (let i = 0; i <= 200; i++) { const x = D.X0 + (D.X1 - D.X0) * i / 200; d += (i ? "L" : "M") + sx(x).toFixed(1) + " " + sy(theoryAt(s.th, -x)).toFixed(1); }
+        g.push(`<path d="${d}" stroke="${s.c}" stroke-width="1.75" stroke-dasharray="6 4" opacity="0.9"/>`);
+      }
+      const d = s.steps.map((t, i) => (i ? "L" : "M") + sx((t.x0 + t.x1) / 2).toFixed(1) + " " + sy(t.v).toFixed(1)).join("");
+      g.push(`<path d="${d}" stroke="${s.c}" stroke-width="1.5" stroke-linejoin="round"/>`);
+      continue;
+    }
+    let d = "";
+    s.steps.forEach((t, i) => {
+      const y = sy(t.v).toFixed(1);
+      d += (i === 0 ? `M${sx(t.x0).toFixed(1)} ${y}` : `V${y}`) + `H${sx(t.x1).toFixed(1)}`;
+    });
     g.push(`<path d="${d}" stroke="${s.c}" stroke-width="2" stroke-linejoin="round"/>`);
+    const last = s.steps[s.steps.length - 1];
+    g.push(`<circle cx="${sx(last.x1)}" cy="${sy(last.v)}" r="3.5" fill="${s.c}" stroke="#fff" stroke-width="1.5"/>`);
   }
-  // direct labels at each line's root (where it reaches one lineage), nudged apart
-  const labs = series.map(s => ({ s, x: sx(s.L.rootX) })).sort((a, b) => a.x - b.x);
-  let lastX = -1e9, lvl = 0;
+  // direct labels at the oldest end of each line, nudged apart
+  const labs = series.filter(s => s.steps.length && mode === "ltt").map(s => { const l = s.steps[s.steps.length - 1]; return { s, x: sx(l.x1), y: sy(l.v) }; }).sort((a, b) => a.y - b.y);
+  let lastY = -1e9;
   for (const L of labs) {
-    lvl = L.x - lastX < 90 ? lvl + 1 : 0; lastX = L.x;
-    g.push(`<circle cx="${L.x}" cy="${sy(1)}" r="4" fill="${L.s.c}" stroke="#fff" stroke-width="2"/><text class="ink" x="${L.x + 7}" y="${sy(1) - 8 - lvl * 15}">${esc(L.s.p.label.replace(/^inferred · /, ""))} root</text>`);
+    const y = Math.max(L.y - 8, lastY + 14); lastY = y;
+    g.push(`<text class="ink" x="${L.x + 7}" y="${y}">${esc(L.s.p.label.replace(/^inferred · /, ""))}</text>`);
   }
   g.push(`</g><g class="lov" pointer-events="none"></g>`);
-  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Lineages through time">${g.join("")}</svg>`;
-  state.ltt = { series, sx, sy, m, W, H, D };
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="${mode === "skyline" ? "Effective population size through time" : "Lineages through time"}">${g.join("")}</svg>`;
+  (state.tp = state.tp || {})[mode] = { series, sx, sy, m, W, H, D, mode };
 }
-function lttHover(e) {
-  const L = state.ltt; if (!L) return;
-  const svg = $("lttplot").querySelector("svg"); if (!svg) return;
+function lttHover(e, mode) {
+  const L = state.tp && state.tp[mode]; if (!L) return;
+  const svg = $(TP[mode].host).querySelector("svg"); if (!svg) return;
   const [mx] = svgPoint(svg, e);
-  if (mx < L.m.l || mx > L.W - L.m.r) { lttLeave(); return; }
+  if (mx < L.m.l || mx > L.W - L.m.r) { lttLeave(mode); return; }
   const x = L.D.X0 + (mx - L.m.l) / (L.W - L.m.l - L.m.r) * (L.D.X1 - L.D.X0);
   let h = `<line x1="${mx}" x2="${mx}" y1="${L.m.t}" y2="${L.H - L.m.b}" stroke="#333" stroke-dasharray="3 3"/>`;
+  const sky = L.mode === "skyline";
   const rows = L.series.map(s => {
-    const k = lttAt(s.L, x);
-    if (k !== null) h += `<circle cx="${mx}" cy="${L.sy(Math.max(1, k))}" r="4.5" fill="${s.c}" stroke="#fff" stroke-width="2"/>`;
-    return `<tr><td><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${s.c};margin-right:5px"></span>${esc(s.p.label)}</td><td class="n">${k === null ? "–" : k}</td></tr>`;
+    const st = stepAt(s.steps, x);
+    if (st) h += `<circle cx="${mx}" cy="${L.sy(st.v)}" r="4.5" fill="${s.c}" stroke="#fff" stroke-width="2"/>`;
+    const sw = `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${s.c};margin-right:5px"></span>`;
+    if (!st) return `<tr><td>${sw}${esc(s.p.label)}</td><td class="n m">–</td>${sky ? `<td class="n m">${s.th && $("optTheory").checked ? fmtP(theoryAt(s.th, -x)) : ""}</td><td class="n m">no coalescence</td>` : ""}</tr>`;
+    if (!sky) return `<tr><td>${sw}${esc(s.p.label)}</td><td class="n">${st.v}</td></tr>`;
+    const a = state.beforePresent ? -st.x0 : st.x0, b = state.beforePresent ? -st.x1 : st.x1;
+    const th = s.th && $("optTheory").checked ? fmtP(theoryAt(s.th, -x)) : "";
+    return `<tr><td>${sw}${esc(s.p.label)}</td><td class="n">${fmtP(st.v)}</td><td class="n m">${th}</td><td class="n m">${st.n} coal. in ${fmt(a)}–${fmt(b)}</td></tr>`;
   }).join("");
   svg.querySelector(".lov").innerHTML = h;
   const t = state.beforePresent ? -x : x;
-  tipShow(`<div class="h">${fmt(t)}${state.beforePresent ? " generations ago" : ""}</div><table><tr class="m"><td>tree</td><td class="n">lineages</td></tr>${rows}</table>`, e);
+  tipShow(`<div class="h">${fmt(t)}${state.beforePresent ? " generations ago" : ""}</div><table><tr class="m"><td>tree</td><td class="n">${sky ? "observed" : "lineages"}</td>${sky ? `<td class="n">theory</td><td class="n">bin</td>` : ""}</tr>${rows}</table>`, e);
   state.hoverX = x; state.hoverName = null; overlays();
 }
-function lttLeave() {
-  const svg = $("lttplot").querySelector("svg"); if (svg) svg.querySelector(".lov").innerHTML = "";
+function lttLeave(mode) {
+  const svg = $(TP[mode].host).querySelector("svg"); if (svg) svg.querySelector(".lov").innerHTML = "";
   $("tip").style.display = "none";
   if (state.hoverX != null) { state.hoverX = null; overlays(); }
 }
-$("lttplot").addEventListener("mousemove", lttHover);
-$("lttplot").addEventListener("mouseleave", lttLeave);
+for (const mode of Object.keys(TP)) {
+  $(TP[mode].host).addEventListener("mousemove", e => lttHover(e, mode));
+  $(TP[mode].host).addEventListener("mouseleave", () => lttLeave(mode));
+}
+$("binSize").addEventListener("change", () => { state.autoBin = false; renderAll(); });
+$("optTheory").addEventListener("change", () => renderAll());
+$("optSkyLog").addEventListener("change", () => renderAll());
 
 function renderPlots(D) {
   $("plots").hidden = false;
   renderParams();
-  renderLTT(D);
+  renderTimePlot(D, "skyline");
+  renderTimePlot(D, "ltt");
 }
 
 /* ---------- hover / click ---------- */
@@ -910,6 +1029,7 @@ async function openGroup(id) {
     const got = await Promise.all(g.files.map(f => fetch(`${DIR}/${encodeURIComponent(f.file)}`).then(r => { if (!r.ok) throw new Error(`${f.file} returned ${r.status}`); return r.json(); })));
     if (src.current !== g.id) return; // user moved on
     state.panels = got.map((j, k) => parseAuspice(j, g.files[k].file));
+    state.autoBin = true;
     state.zoom = null;
   } catch (err) { $("err").textContent = "Couldn't load " + g.id + ": " + err.message; }
   refresh();
