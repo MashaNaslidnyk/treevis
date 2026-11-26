@@ -187,25 +187,22 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
       <div class="pgrid" id="paramplot"></div>
     </div>
     <div class="plot">
-      <div class="bar" style="margin:0"><h2>Effective population size, N<sub>e</sub>(t) <a class="src" href="https://doi.org/10.1093/molbev/mss170">Fig. 3 in Nicolaisen and Desai (2012)</a></h2>
-        <span class="row" style="align-items:center;gap:14px">
-          <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px" title="Used by Figs. 3, 4 and 5">Bin width, Figs. 3–5 (generations)
-            <input id="binSize" type="number" min="0.1" step="any" value="10" class="field" style="width:80px"></label>
-          <label class="toggle" style="margin:0"><input type="checkbox" id="optTheory" checked> Theory</label>
-          <label class="toggle" style="margin:0"><input type="checkbox" id="optSkyLog"> Log scale</label>
-        </span></div>
+      <div class="bar" style="margin:0"><h2>Pairs not yet coalesced <a class="src" href="https://doi.org/10.1093/molbev/mss170">cumulative form of Fig. 3 in Nicolaisen and Desai (2012)</a></h2>
+        <label class="toggle" style="margin:0"><input type="checkbox" id="optTheory" checked> Theory (Figs. 3–5)</label></div>
       <p class="hint" id="skyhint"></p>
       <div class="plegend" id="skylegend"></div>
       <div id="skyplot"></div>
     </div>
     <div class="plot">
-      <div class="bar" style="margin:0"><h2>Effective mutation rate, U<sub>e</sub>(t) <a class="src" href="https://doi.org/10.1093/molbev/mss170">Fig. 4 in Nicolaisen and Desai (2012)</a></h2></div>
+      <div class="bar" style="margin:0"><h2>Effective mutation rate, U<sub>e</sub>(t) <a class="src" href="https://doi.org/10.1093/molbev/mss170">Fig. 4 in Nicolaisen and Desai (2012)</a></h2>
+        <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px">Bin width (generations)
+          <input id="binSize" type="number" min="0.1" step="any" value="10" class="field" style="width:80px"></label></div>
       <p class="hint" id="muthint"></p>
       <div class="plegend" id="mutlegend"></div>
       <div id="mutplot"></div>
     </div>
     <div class="plot">
-      <div class="bar" style="margin:0"><h2>Pairwise coalescence times, ψ<sub>2</sub>(t) <a class="src" href="https://doi.org/10.1093/molbev/mss170">Fig. 5 in Nicolaisen and Desai (2012)</a></h2></div>
+      <div class="bar" style="margin:0"><h2>Pairwise coalescence times, cumulative <a class="src" href="https://doi.org/10.1093/molbev/mss170">cumulative form of Fig. 5 in Nicolaisen and Desai (2012)</a></h2></div>
       <p class="hint" id="psihint"></p>
       <div class="plegend" id="psilegend"></div>
       <div id="psiplot"></div>
@@ -736,8 +733,7 @@ function stepAt(steps, x) { // steps: [{x0 (younger), x1 (older), v}]
   for (const s of steps) if (x <= s.x0 && x >= s.x1) return s;
   return null;
 }
-const TP = { skyline: { host: "skyplot", hint: "skyhint", legend: "skylegend", log: "optSkyLog", ylab: "Nₑ(t)", unit: "observed" },
-             ltt: { host: "lttplot", hint: "ltthint", legend: "lttlegend", log: "optLog", ylab: "lineages", unit: "lineages", text: "Number of lineages alive at each time." },
+const TP = { ltt: { host: "lttplot", hint: "ltthint", legend: "lttlegend", log: "optLog", ylab: "lineages", unit: "lineages", text: "Number of lineages alive at each time." },
              ccoal: { host: "ccplot", hint: "cchint", legend: "cclegend", log: "optCcLog", ylab: "coalescences so far", unit: "coalescences", text: "Number of coalescences between the present and each time." },
              cmut: { host: "cmplot", hint: "cmhint", legend: "cmlegend", log: "optCmLog", ylab: "mutations so far", unit: "mutations", text: "Number of mutation events between the present and each time." } };
 function cumulativeSteps(xsDesc, counts, rootX) { // xsDesc: event times, present first; counts at each
@@ -881,14 +877,12 @@ for (const mode of Object.keys(TP)) {
 }
 $("binSize").addEventListener("change", () => { state.autoBin = false; renderAll(); });
 $("optTheory").addEventListener("change", () => renderAll());
-$("optSkyLog").addEventListener("change", () => renderAll());
 $("optCcLog").addEventListener("change", () => renderAll());
 $("optCmLog").addEventListener("change", () => renderAll());
 
 function renderPlots(D) {
   $("plots").hidden = false;
   renderParams();
-  renderTimePlot(D, "skyline");
   renderFig45(D);
   renderTimePlot(D, "ltt");
   renderTimePlot(D, "ccoal");
@@ -1013,6 +1007,94 @@ function fig4Series(p, n, w, truth) {
   return { pts, th };
 }
 
+/* ---------- cumulative forms of Figs. 3 and 5 (one tree) ----------
+   Fig. 3: fraction of all pairs of sampled tips not yet coalesced at time t (absolute time).
+     Theory: average over pairs of exp(−∫_{max(a_i,a_j)}^{t} r_ij), r_ij = (1/N)·exp(λ(1−e^{−su})(1−e^{−sv})).
+   Fig. 5: cumulative distribution of the coalescence time of two tips sampled at the same time
+     (measured from sampling). Theory: 1 − exp(−∫_0^τ 1/N_e(u) du), N_e from eq. 7. */
+function pairEventsByCohort(start) { // pair coalescences grouped by cohort pair, plus cohort sizes
+  const order = postorder(start), maps = new Map(), coal = new Map(), size = new Map();
+  for (const n of order) {
+    if (!n.children.length) { const a = ageKey(n.x); maps.set(n, new Map([[a, 1]])); size.set(a, (size.get(a) || 0) + 1); continue; }
+    if (n.children.length === 1) { maps.set(n, maps.get(n.children[0])); maps.delete(n.children[0]); continue; }
+    const t = -n.x, kids = n.children.map(c => maps.get(c));
+    for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++)
+      for (const [a, ca] of kids[i]) for (const [b, cb] of kids[j]) {
+        const key = a <= b ? a + "|" + b : b + "|" + a;
+        let l = coal.get(key); if (!l) coal.set(key, l = []); l.push([t, ca * cb]);
+      }
+    kids.sort((x, y) => y.size - x.size);
+    const big = kids[0];
+    for (const m of kids.slice(1)) for (const [a, c] of m) big.set(a, (big.get(a) || 0) + c);
+    n.children.forEach(c => maps.delete(c)); maps.set(n, big);
+  }
+  return { coal, size };
+}
+function stepsFromEvents(ev, total, tEnd, fromOne) { // ev: [[t, count]] -> [{x0,x1,v}] in tree coordinates (x = −t)
+  ev.sort((a, b) => a[0] - b[0]);
+  const out = []; let cum = 0, last = 0;
+  for (let i = 0; i < ev.length;) {
+    const t = ev[i][0];
+    out.push({ x0: -last, x1: -t, v: fromOne ? 1 - cum / total : cum / total });
+    while (i < ev.length && ev[i][0] === t) cum += ev[i++][1];
+    last = t;
+  }
+  out.push({ x0: -last, x1: -Math.max(last, tEnd), v: fromOne ? 1 - cum / total : cum / total });
+  return out.filter((s, i) => s.x0 > s.x1 || i === out.length - 1);
+}
+function survivalSeries(p, n, truth, D) {
+  const P = paramsFor(p, truth, "ne");
+  const key = `surv|${p.id}|${n.name}|${P ? (P.flat !== undefined ? P.flat : [P.Ud, P.s, P.N]) : "-"}|${D.X0.toFixed(1)}`;
+  return cached(key, () => {
+    const { coal, size } = pairEventsByCohort(n);
+    let total = 0; const all = [];
+    const ages = [...size.keys()].sort((a, b) => a - b);
+    for (let i = 0; i < ages.length; i++) for (let k = i; k < ages.length; k++) total += i === k ? size.get(ages[i]) * (size.get(ages[i]) - 1) / 2 : size.get(ages[i]) * size.get(ages[k]);
+    for (const l of coal.values()) all.push(...l);
+    const steps = stepsFromEvents(all, total, -D.X0, true);
+    let th = null;
+    if (P && total) {
+      const G = 400, tmax = -D.X0, dt = tmax / G, grid = new Float64Array(G + 1);
+      for (let i = 0; i < ages.length; i++) for (let k = i; k < ages.length; k++) {
+        const a = ages[i], b = ages[k];
+        const npair = i === k ? size.get(a) * (size.get(a) - 1) / 2 : size.get(a) * size.get(b);
+        if (!npair) continue;
+        const t0 = Math.max(a, b); let I = 0;
+        for (let g = 0; g <= G; g++) {
+          const t = g * dt;
+          if (t > t0) { const tm = Math.max(t0, t - dt / 2), r = P.flat !== undefined ? 1 / P.flat : pairRate(P, tm - a, tm - b); I += r * Math.min(dt, t - t0); }
+          grid[g] += npair * Math.exp(-I);
+        }
+      }
+      for (let g = 0; g <= G; g++) grid[g] /= total;
+      th = { fn: t => { const g = Math.min(G, Math.max(0, Math.round(t / dt))); return grid[g]; } };
+    }
+    return { steps, th, total };
+  });
+}
+function cdfSeries(p, n, truth, D) {
+  const P = paramsFor(p, truth, "ne");
+  const key = `cdf|${p.id}|${n.name}|${P ? (P.flat !== undefined ? P.flat : [P.Ud, P.s, P.N]) : "-"}|${D.X0.toFixed(1)}`;
+  return cached(key, () => {
+    const { coal, size } = pairEventsByCohort(n);
+    const ev = []; let total = 0;
+    for (const [a, c] of size) {
+      total += c * (c - 1) / 2;
+      for (const [t, k] of coal.get(a + "|" + a) || []) ev.push([t - a, k]);
+    }
+    const tEnd = Math.max(-D.X0, ...ev.map(e => e[0]));
+    const steps = total ? stepsFromEvents(ev, total, tEnd, false) : [];
+    let th = null;
+    if (P) {
+      const ne = t => P.flat !== undefined ? P.flat : theoryAt(P, t);
+      const G = 800, dt = tEnd / G, grid = new Float64Array(G + 1); let I = 0;
+      for (let g = 0; g <= G; g++) { grid[g] = 1 - Math.exp(-I); I += dt / ne((g + 0.5) * dt); }
+      th = { fn: t => { const g = Math.min(G, Math.max(0, Math.round(t / dt))); return grid[g]; } };
+    }
+    return { steps, th, total };
+  });
+}
+
 /* ---------- Nicolaisen & Desai (2012) Figs. 4 and 5 ---------- */
 // integrate f(k)·dt over fixed-width bins (aligned to the present), k = lineages
 function binIntegrate(E, w, f) {
@@ -1101,7 +1183,7 @@ function renderCurvePlot(D, cfg) {
     for (const e of cfg.extra || []) for (let i = 0; i <= 60; i++) { const v = e.f(-(D.X0 + (D.X1 - D.X0) * i / 60)); if (isFinite(v)) tmax = Math.max(tmax, v); }
   }
   const q = obs.length ? obs[Math.min(obs.length - 1, Math.floor(obs.length * 0.97))] : 1;
-  let vmax = Math.max(tmax * 1.15, tmax ? Math.min(q, 2 * tmax) : q) || 1;
+  let vmax = cfg.yfix || Math.max(tmax * 1.15, tmax ? Math.min(q, 2 * tmax) : q) || 1;
   const sy = v => m.t + ih - Math.min(1.02, Math.max(0, v / vmax)) * ih;
   const g = [];
   for (const t of niceTicks(D.X0, D.X1, Math.max(3, Math.round(iw / 110))))
@@ -1118,7 +1200,11 @@ function renderCurvePlot(D, cfg) {
   if (showTh) for (const e of cfg.extra || []) g.push(curve(e.f, e.c, e.dash, 1.5));
   for (const s of cfg.series.slice().sort((a, b) => isTrue(b.p) - isTrue(a.p))) {
     if (showTh && s.th) g.push(`<path d="${thPath(s.th, sx, sy, D)}" stroke="${s.c}" stroke-width="1.75" stroke-dasharray="6 4"/>`);
-    if (s.pts.length) g.push(`<path d="${s.pts.map((t, i) => (i ? "L" : "M") + sx((t.x0 + t.x1) / 2).toFixed(1) + " " + sy(t.v).toFixed(1)).join("")}" stroke="${s.c}" stroke-width="1.5" stroke-linejoin="round"/>`);
+    if (s.pts.length) {
+      const d = cfg.step ? s.pts.map((t, i) => (i ? "V" : `M${sx(t.x0).toFixed(1)} `) + sy(t.v).toFixed(1) + "H" + sx(t.x1).toFixed(1)).join("")
+                         : s.pts.map((t, i) => (i ? "L" : "M") + sx((t.x0 + t.x1) / 2).toFixed(1) + " " + sy(t.v).toFixed(1)).join("");
+      g.push(`<path d="${d}" stroke="${s.c}" stroke-width="${cfg.step ? 2 : 1.5}" stroke-linejoin="round"/>`);
+    }
   }
   g.push(`</g><g class="lov" pointer-events="none"></g>`);
   host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="${esc(cfg.aria)}">${g.join("")}</svg>`;
@@ -1153,17 +1239,27 @@ function curveLeave(mode) {
   $("tip").style.display = "none";
   if (state.hoverX != null) { state.hoverX = null; overlays(); }
 }
-for (const [mode, host] of [["mut", "mutplot"], ["psi", "psiplot"]]) {
+for (const [mode, host] of [["ne", "skyplot"], ["mut", "mutplot"], ["psi", "psiplot"]]) {
   $(host).addEventListener("mousemove", e => curveHover(e, mode));
   $(host).addEventListener("mouseleave", () => curveLeave(mode));
 }
 
 function renderFig45(D) {
+  if (state.autoBin) { const h = Math.max(...state.panels.map(p => p.root.xMaxSub - p.root.x)); $("binSize").value = niceStep(h / 60); state.autoBin = false; }
   const z = state.zoom, w = Math.max(1e-6, +$("binSize").value || 10);
   const truth = {}; for (const p of state.panels) Object.assign(truth, paramsOf(p).tru);
   const where = z ? `Within clade ${z.name} (${z.tipCount} tips). ` : "";
   const items = state.panels.map(p => { const n = z ? p.byName.get(z.name) : p.root; return n ? { p, n, c: seriesColor(p), E: treeEvents(n) } : null; }).filter(Boolean);
   const xlabel = state.beforePresent ? "generations before present" : "divergence";
+
+  // Fig. 3, cumulative: fraction of pairs of sampled tips not yet coalesced
+  renderCurvePlot(D, {
+    mode: "ne", host: "skyplot", legend: "skylegend", aria: "Fraction of pairs of tips not yet coalesced", step: true, yfix: 1.02,
+    ylabel: "fraction of tip pairs not yet coalesced", xlabel, tunit: state.beforePresent ? "generations ago" : "", guide: true,
+    fmt: v => v.toFixed(3), count: () => "",
+    series: items.map(it => { const r = survivalSeries(it.p, it.n, truth, D); return { p: it.p, c: it.c, pts: r.steps, th: r.th }; })
+  });
+  $("skyhint").innerHTML = where + `Solid: observed fraction of all pairs of sampled tips that have not coalesced by each time. Dashed: theory, the average over pairs of exp(−∫1/N<sub>e</sub>), with the pair rate 1/N<sub>e</sub> = (1/N)·exp((U<sub>d</sub>/s)(1−e<sup>−su</sup>)(1−e<sup>−sv</sup>)), u, v = time since each tip was sampled.`;
 
   // Fig. 4: U_e(t) = Ud·e^{-st} (only deleterious mutations are on these trees, so U_n = 0)
   renderCurvePlot(D, {
@@ -1175,20 +1271,16 @@ function renderFig45(D) {
   });
   $("muthint").innerHTML = where + `Solid: observed, mutation events on each sampled tip's ancestral line ÷ time on those lines, per ${fmtTick(w)}-generation bin. Dashed: theory, U<sub>d</sub>e<sup>−su</sup>, with u the time since that tip was sampled.`;
 
-  // Fig. 5: Ψ2(t), pairwise coalescence-time density
-  const psiData = items.map(it => ({ it, pb: pairBins(it.n, w) }));
-  const tmaxPair = Math.max(1, ...psiData.map(d => d.pb.bins.length ? -d.pb.bins[d.pb.bins.length - 1].x1 : 0), -D.X0);
-  const neFor = p => { const th = theoryFor(p, truth); return th ? (t => theoryAt(th, t)) : null; };
-  const extra = [];
+  // Fig. 5, cumulative: distribution of coalescence times for pairs sampled at the same time
+  const cdfs = items.map(it => ({ it, r: cdfSeries(it.p, it.n, truth, D) }));
   renderCurvePlot(D, {
-    mode: "psi", host: "psiplot", legend: "psilegend", aria: "Distribution of pairwise coalescence times",
-    ylabel: "ψ(t), probability density per generation", xlabel: "generations between sampling and coalescence (pairs sampled at the same time)", tunit: "generations after sampling", guide: false,
-    fmt: v => v.toPrecision(3), count: b => `${Math.round(b.n).toLocaleString("en-GB")} pairs`,
-    series: psiData.map(({ it, pb }) => { const ne = neFor(it.p); const f = ne ? psiFromNe(ne, tmaxPair) : null; return { p: it.p, c: it.c, pts: pb.bins, th: f ? { fn: f } : null }; }),
-    extra
+    mode: "psi", host: "psiplot", legend: "psilegend", aria: "Cumulative distribution of pairwise coalescence times", step: true, yfix: 1.02,
+    ylabel: "fraction of pairs coalesced", xlabel: "generations since sampling (pairs sampled at the same time)", tunit: "generations after sampling", guide: false,
+    fmt: v => v.toFixed(3), count: () => "",
+    series: cdfs.map(({ it, r }) => ({ p: it.p, c: it.c, pts: r.steps, th: r.th }))
   });
-  const npairs = psiData[0] ? Math.round(psiData[0].pb.total) : 0;
-  $("psihint").innerHTML = where + `Solid: observed coalescence times of all ${npairs.toLocaleString("en-GB")} pairs of tips sampled at the same time, measured from sampling, in ${fmtTick(w)}-generation bins. Dashed: ψ<sub>2</sub>(t) = (1/N<sub>e</sub>(t))·exp(−∫<sub>0</sub><sup>t</sup>1/N<sub>e</sub>), with the paper's N<sub>e</sub>(t) (true values for the true tree, posterior means for backsel, constant N<sub>e</sub> for neutral).`;
+  const npairs = cdfs[0] ? Math.round(cdfs[0].r.total) : 0;
+  $("psihint").innerHTML = where + `Solid: observed fraction of the ${npairs.toLocaleString("en-GB")} pairs of tips sampled at the same time that have coalesced within each time since sampling. Dashed: theory, 1 − exp(−∫<sub>0</sub><sup>t</sup>1/N<sub>e</sub>), the integral of ψ<sub>2</sub>(t), with N<sub>e</sub>(t) from eq. 7.`;
 }
 
 /* ---------- hover / click ---------- */
