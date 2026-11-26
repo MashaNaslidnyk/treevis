@@ -89,9 +89,11 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .plegend b { display: inline-block; width: 16px; height: 2px; border-radius: 1px; }
 .pgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 28px; }
 .pgrid svg { display: block; overflow: visible; }
-#lttplot svg, #skyplot svg { display: block; width: 100%; }
-.pgrid text, #lttplot text, #skyplot text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
-.pgrid text.ink, #lttplot text.ink, #skyplot text.ink { fill: var(--ink); font-size: 12px; }
+#lttplot svg, #skyplot svg, #mutplot svg, #psiplot svg { display: block; width: 100%; }
+.plot h2 .src { font-size: 12px; color: var(--accent); margin-left: 8px; text-decoration: none; white-space: nowrap; }
+.plot h2 .src:hover { text-decoration: underline; }
+.pgrid text, #lttplot text, #skyplot text, #mutplot text, #psiplot text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.pgrid text.ink, #lttplot text.ink, #skyplot text.ink, #mutplot text.ink, #psiplot text.ink { fill: var(--ink); font-size: 12px; }
 .pgrid h4 { margin: 0; font-size: 14px; font-weight: 700; }
 .pgrid h4 span { font-weight: 400; color: var(--muted); margin-left: 4px; }
 .chip { flex: 0 0 auto; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; padding: 3px 7px; border-radius: 3px; background: #eef4f8; color: var(--accent); }
@@ -185,9 +187,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
       <div class="pgrid" id="paramplot"></div>
     </div>
     <div class="plot">
-      <div class="bar" style="margin:0"><h2>Effective population size through time</h2>
+      <div class="bar" style="margin:0"><h2>Effective population size, N<sub>e</sub>(t) <a class="src" href="https://doi.org/10.1093/molbev/mss170">Fig. 3 in Nicolaisen and Desai (2012)</a></h2>
         <span class="row" style="align-items:center;gap:14px">
-          <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px">Bin width (generations)
+          <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px" title="Used by Figs. 3, 4 and 5">Bin width, Figs. 3–5 (generations)
             <input id="binSize" type="number" min="0.1" step="any" value="10" class="field" style="width:80px"></label>
           <label class="toggle" style="margin:0"><input type="checkbox" id="optTheory" checked> Theory</label>
           <label class="toggle" style="margin:0"><input type="checkbox" id="optSkyLog"> Log scale</label>
@@ -195,6 +197,18 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
       <p class="hint" id="skyhint"></p>
       <div class="plegend" id="skylegend"></div>
       <div id="skyplot"></div>
+    </div>
+    <div class="plot">
+      <div class="bar" style="margin:0"><h2>Effective mutation rate, U<sub>e</sub>(t) <a class="src" href="https://doi.org/10.1093/molbev/mss170">Fig. 4 in Nicolaisen and Desai (2012)</a></h2></div>
+      <p class="hint" id="muthint"></p>
+      <div class="plegend" id="mutlegend"></div>
+      <div id="mutplot"></div>
+    </div>
+    <div class="plot">
+      <div class="bar" style="margin:0"><h2>Pairwise coalescence times, ψ<sub>2</sub>(t) <a class="src" href="https://doi.org/10.1093/molbev/mss170">Fig. 5 in Nicolaisen and Desai (2012)</a></h2></div>
+      <p class="hint" id="psihint"></p>
+      <div class="plegend" id="psilegend"></div>
+      <div id="psiplot"></div>
     </div>
     <div class="plot">
       <div class="bar" style="margin:0"><h2>Lineages through time</h2>
@@ -643,6 +657,66 @@ function theoryAt(th, t) {
   const u = 1 - Math.exp(-th.s * Math.max(0, t));
   return th.N * Math.exp(-(th.Ud / th.s) * u * u);
 }
+/* Model prediction given the tree's own fitness classes (handles tips sampled at different times).
+   At each moment, with a_k lineages in class k: expected coalescence rate = sum_k C(a_k,2)/(N h_k),
+   h_k = Poisson(Ud/s) weights; expected mutation (class-loss) rate = s * sum_k k a_k.
+   Per bin: N_e = ∫C(a,2)dt / ∫sum_k C(a_k,2)/(N h_k) dt, and U_e = s ∫sum_k k a_k dt / ∫a dt. */
+function hasClasses(p) { return p.nodes.some(n => n.attrs.fitness_class !== undefined); }
+function classModel(start, w, P) {
+  const lam = P.Ud / P.s, hk = [];
+  const h = k => { while (hk.length <= k) { const j = hk.length; hk.push(j ? hk[j - 1] * lam / j : Math.exp(-lam)); } return hk[k]; };
+  const ev = [], st = [start];
+  while (st.length) {
+    const n = st.pop();
+    for (const c of n.children) {
+      const k = parseInt(c.attrs.fitness_class, 10) || 0;
+      ev.push([-c.x, 1, k], [-n.x, -1, k]);
+      st.push(c);
+    }
+  }
+  ev.sort((a, b) => a[0] - b[0]);
+  const a = new Map(), bins = new Map();
+  const acc = (j, f, v) => { let b = bins.get(j); if (!b) bins.set(j, b = { tot: 0, mod: 0, ks: 0, lin: 0 }); b[f] += v; };
+  let last = ev.length ? ev[0][0] : 0;
+  for (const [t, d, k] of ev) {
+    const dt = t - last;
+    if (dt > 0) {
+      let A = 0, mod = 0, ks = 0;
+      for (const [kk, c] of a) { if (!c) continue; A += c; mod += c * (c - 1) / 2 / (P.N * h(kk)); ks += kk * c; }
+      if (A > 0) for (let j = Math.floor(last / w); j * w < t; j++) {
+        const o = Math.min(t, (j + 1) * w) - Math.max(last, j * w);
+        if (o <= 0) continue;
+        acc(j, "tot", A * (A - 1) / 2 * o); acc(j, "mod", mod * o); acc(j, "ks", ks * o); acc(j, "lin", A * o);
+      }
+    }
+    a.set(k, (a.get(k) || 0) + d); last = t;
+  }
+  return [...bins.entries()].sort((x, y) => x[0] - y[0]).map(([j, b]) => ({ x0: -j * w, x1: -(j + 1) * w, ne: b.mod > 0 ? b.tot / b.mod : NaN, ue: b.lin > 0 ? P.s * b.ks / b.lin : NaN }));
+}
+// theory for one tree: {pts} (model given its classes), {flat}, or closed-form params
+function treeTheory(p, start, w, truth, which) {
+  const th = theoryFor(p, truth);
+  if (!th) return null;
+  if (th.flat !== undefined) {
+    if (which === "ne") return th;
+    const est = paramsOf(p).est;
+    return est.Ud ? { flat: est.Ud.mean } : null;
+  }
+  if (hasClasses(p)) return { pts: classModel(start, w, th).map(b => ({ x0: b.x0, x1: b.x1, v: which === "ne" ? b.ne : b.ue })).filter(b => isFinite(b.v)) };
+  return which === "ne" ? th : { fn: t => th.Ud * Math.exp(-th.s * t) };
+}
+function thAt(th, x) {
+  if (!th) return NaN;
+  if (th.pts) { const b = stepAt(th.pts, x); return b ? b.v : NaN; }
+  if (th.fn) return th.fn(-x);
+  return theoryAt(th, -x);
+}
+function thPath(th, sx, sy, D) {
+  if (th.pts) return th.pts.map((b, i) => (i ? "L" : "M") + sx((b.x0 + b.x1) / 2).toFixed(1) + " " + sy(b.v).toFixed(1)).join("");
+  let d = "";
+  for (let i = 0; i <= 240; i++) { const x = D.X0 + (D.X1 - D.X0) * i / 240, v = thAt(th, x); if (isFinite(v)) d += (d ? "L" : "M") + sx(x).toFixed(1) + " " + sy(v).toFixed(1); }
+  return d;
+}
 function niceStep(x) { const mag = 10 ** Math.floor(Math.log10(x)); return [1, 2, 2.5, 5, 10].map(f => f * mag).find(v => v >= x) || x; }
 function stepAt(steps, x) { // steps: [{x0 (younger), x1 (older), v}]
   for (const s of steps) if (x <= s.x0 && x >= s.x1) return s;
@@ -660,6 +734,7 @@ function renderTimePlot(D, mode) {
   const w = Math.max(1e-6, +$("binSize").value || 10);
   const truth = {}; for (const p of state.panels) Object.assign(truth, paramsOf(p).tru);
   const showTh = mode === "skyline" && $("optTheory").checked;
+  const ndRef = mode === "skyline" && [truth.Ud, truth.s, truth.N].every(isFinite) ? { Ud: truth.Ud, s: truth.s, N: truth.N } : null;
   const series = state.panels.map(p => {
     const n = z ? p.byName.get(z.name) : p.root;
     if (!n) return null;
@@ -667,14 +742,14 @@ function renderTimePlot(D, mode) {
     let steps;
     if (mode === "skyline") steps = fixedBins(E, w);
     else steps = E.xs.map((x, i) => ({ x0: x, x1: i + 1 < E.xs.length ? E.xs[i + 1] : E.rootX, v: E.ks[i] })).filter(s => s.v > 0);
-    return { p, E, steps, c: seriesColor(p), th: mode === "skyline" ? theoryFor(p, truth) : null };
+    return { p, E, steps, c: seriesColor(p), th: mode === "skyline" ? treeTheory(p, n, w, truth, "ne") : null };
   }).filter(Boolean);
   const where = z ? `Within clade ${z.name} (${z.tipCount} tips). ` : "";
   $(ids.hint).innerHTML = where + (mode === "skyline"
-    ? `Solid: observed N<sub>e</sub>(t) from each tree, in ${fmtTick(w)}-generation bins: Σ C(k,2)·Δt ÷ coalescences in the bin, where k is the number of lineages (the inverse of the observed per-pair coalescence rate). Bins with no coalescence are skipped, so the line jumps across them. Dashed: theory, N<sub>e</sub>(t) = N·exp(−(U<sub>d</sub>/s)(1−e<sup>−st</sup>)²) (Nicolaisen &amp; Desai 2012, Fig. 3), using the true values for the true tree and the posterior means for backsel. The neutral fit's theory is its constant N<sub>e</sub>.`
+    ? `Solid: observed N<sub>e</sub>(t) from each tree, in ${fmtTick(w)}-generation bins: Σ C(k,2)·Δt ÷ coalescences in the bin, where k is the number of lineages (the inverse of the observed per-pair coalescence rate). Bins with no coalescence are skipped, so the line jumps across them. Dashed: the structured-coalescent prediction for the lineages actually present, using each tree's fitness classes. With a<sub>k</sub> lineages in class k, pairs coalesce at Σ C(a<sub>k</sub>,2)/(N·h<sub>k</sub>), where h<sub>k</sub> are the Poisson(U<sub>d</sub>/s) class frequencies. The true tree uses the true values, backsel its posterior means, and the neutral fit its constant N<sub>e</sub>. Grey dash-dot: the paper's formula N<sub>e</sub>(t) = N·exp(−(U<sub>d</sub>/s)(1−e<sup>−st</sup>)²) with the true values. It assumes every tip was sampled at time 0, so it only applies when nearly all tips are modern; tips sampled later in the past enter carrying mutations, which keeps lineages spread across classes.`
     : "Each line counts the branches alive at each time: a tip adds a lineage, a coalescence removes one.") + " The time axis lines up with the trees above.";
   $(ids.legend).innerHTML = series.map(s => `<span><b style="background:${s.c}"></b>${esc(s.p.label)}</span>`).join("") +
-    (showTh ? `<span style="color:var(--muted)">solid: observed</span><span style="color:var(--muted)"><b style="height:0;border-top:2px dashed #888;background:none"></b>dashed: theory</span>` : "");
+    (showTh ? `<span style="color:var(--muted)">solid: observed</span><span style="color:var(--muted)"><b style="height:0;border-top:2px dashed #888;background:none"></b>dashed: model, given each tree's classes</span>` + (ndRef ? `<span style="color:var(--muted)"><b style="height:0;border-top:2px dashed #9a9a9a;background:none"></b>grey dash-dot: Nicolaisen–Desai formula, all tips sampled at time 0</span>` : "") : "");
   const W = Math.max(320, host.clientWidth || $("panels").clientWidth), H = 300;
   const showLabels = state.labels && D.tipsInView <= 70;
   const m = { l: 10, r: showLabels ? 110 : 16, t: 14, b: 30 };
@@ -685,7 +760,8 @@ function renderTimePlot(D, mode) {
   if (mode === "ltt") vmin = 1;
   if (showTh) { // keep the theory in view and don't let a few noisy bins squash everything
     const tv = [];
-    for (const s of series) if (s.th) for (let i = 0; i <= 40; i++) tv.push(theoryAt(s.th, -(D.X0 + (D.X1 - D.X0) * i / 40)));
+    for (const s of series) if (s.th) { if (s.th.pts) tv.push(...s.th.pts.map(b => b.v)); else for (let i = 0; i <= 40; i++) tv.push(thAt(s.th, D.X0 + (D.X1 - D.X0) * i / 40)); }
+    if (ndRef) for (let i = 0; i <= 40; i++) tv.push(theoryAt(ndRef, -(D.X0 + (D.X1 - D.X0) * i / 40)));
     if (tv.length) {
       const tmax = Math.max(...tv), tmin = Math.min(...tv);
       vmin = Math.min(vmin, tmin);
@@ -710,14 +786,11 @@ function renderTimePlot(D, mode) {
   g.push(`<text x="${W - m.r}" y="${H - 3}" text-anchor="end">${state.beforePresent ? "generations before present" : "divergence"}</text>`);
   g.push(`<text class="ink" x="${m.l + 2}" y="${m.t - 2}">${mode === "skyline" ? "Nₑ(t)" : "lineages"}${log ? " · log scale" : ""}</text>`);
   g.push(`<defs><clipPath id="clip-${mode}"><rect x="${m.l}" y="0" width="${iw + 6}" height="${H}"/></clipPath></defs><g clip-path="url(#clip-${mode})" fill="none">`);
+  if (showTh && ndRef) g.push(`<path d="${thPath(ndRef, sx, sy, D)}" stroke="#9a9a9a" stroke-width="1.5" stroke-dasharray="2 3 8 3"/>`);
   for (const s of series.slice().sort((a, b) => isTrue(b.p) - isTrue(a.p))) { // true underneath
     if (!s.steps.length) continue;
     if (mode === "skyline") {
-      if (showTh && s.th) {
-        let d = "";
-        for (let i = 0; i <= 200; i++) { const x = D.X0 + (D.X1 - D.X0) * i / 200; d += (i ? "L" : "M") + sx(x).toFixed(1) + " " + sy(theoryAt(s.th, -x)).toFixed(1); }
-        g.push(`<path d="${d}" stroke="${s.c}" stroke-width="1.75" stroke-dasharray="6 4" opacity="0.9"/>`);
-      }
+      if (showTh && s.th) g.push(`<path d="${thPath(s.th, sx, sy, D)}" stroke="${s.c}" stroke-width="1.75" stroke-dasharray="6 4" opacity="0.9"/>`);
       const d = s.steps.map((t, i) => (i ? "L" : "M") + sx((t.x0 + t.x1) / 2).toFixed(1) + " " + sy(t.v).toFixed(1)).join("");
       g.push(`<path d="${d}" stroke="${s.c}" stroke-width="1.5" stroke-linejoin="round"/>`);
       continue;
@@ -754,10 +827,10 @@ function lttHover(e, mode) {
     const st = stepAt(s.steps, x);
     if (st) h += `<circle cx="${mx}" cy="${L.sy(st.v)}" r="4.5" fill="${s.c}" stroke="#fff" stroke-width="2"/>`;
     const sw = `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${s.c};margin-right:5px"></span>`;
-    if (!st) return `<tr><td>${sw}${esc(s.p.label)}</td><td class="n m">–</td>${sky ? `<td class="n m">${s.th && $("optTheory").checked ? fmtP(theoryAt(s.th, -x)) : ""}</td><td class="n m">no coalescence</td>` : ""}</tr>`;
+    if (!st) return `<tr><td>${sw}${esc(s.p.label)}</td><td class="n m">–</td>${sky ? `<td class="n m">${s.th && $("optTheory").checked && isFinite(thAt(s.th, x)) ? fmtP(thAt(s.th, x)) : ""}</td><td class="n m">no coalescence</td>` : ""}</tr>`;
     if (!sky) return `<tr><td>${sw}${esc(s.p.label)}</td><td class="n">${st.v}</td></tr>`;
     const a = state.beforePresent ? -st.x0 : st.x0, b = state.beforePresent ? -st.x1 : st.x1;
-    const th = s.th && $("optTheory").checked ? fmtP(theoryAt(s.th, -x)) : "";
+    const th = s.th && $("optTheory").checked && isFinite(thAt(s.th, x)) ? fmtP(thAt(s.th, x)) : "";
     return `<tr><td>${sw}${esc(s.p.label)}</td><td class="n">${fmtP(st.v)}</td><td class="n m">${th}</td><td class="n m">${st.n} coal. in ${fmt(a)}–${fmt(b)}</td></tr>`;
   }).join("");
   svg.querySelector(".lov").innerHTML = h;
@@ -782,7 +855,190 @@ function renderPlots(D) {
   $("plots").hidden = false;
   renderParams();
   renderTimePlot(D, "skyline");
+  renderFig45(D);
   renderTimePlot(D, "ltt");
+}
+
+/* ---------- Nicolaisen & Desai (2012) Figs. 4 and 5 ---------- */
+// integrate f(k)·dt over fixed-width bins (aligned to the present), k = lineages
+function binIntegrate(E, w, f) {
+  const out = new Map();
+  for (let i = 0; i + 1 < E.xs.length; i++) {
+    const v = f(E.ks[i]); if (!(v > 0)) continue;
+    const ta = -E.xs[i], tb = -E.xs[i + 1];
+    for (let j = Math.floor(ta / w); j * w < tb; j++) {
+      const lo = Math.max(ta, j * w), hi = Math.min(tb, (j + 1) * w);
+      if (hi > lo) out.set(j, (out.get(j) || 0) + v * (hi - lo));
+    }
+  }
+  return out;
+}
+const binIndex = (t, w) => Math.max(0, Math.ceil(t / w - 1e-9) - 1);
+
+/* Fig. 4: observed deleterious-mutation rate per lineage = mutation events in a bin ÷ lineage-time in the bin */
+function mutBins(start, E, w) {
+  const expo = binIntegrate(E, w, k => k), cnt = new Map();
+  const st = [start];
+  while (st.length) {
+    const n = st.pop();
+    if (n.children.length === 1) { const j = binIndex(-n.x, w); cnt.set(j, (cnt.get(j) || 0) + 1); }
+    for (const c of n.children) st.push(c);
+  }
+  return [...expo.entries()].sort((a, b) => a[0] - b[0]).map(([j, ex]) => ({ x0: -j * w, x1: -(j + 1) * w, v: (cnt.get(j) || 0) / ex, n: cnt.get(j) || 0, ex }));
+}
+
+/* Fig. 5: distribution of pairwise coalescence times. Pairs are taken within a sampling cohort (tips of the same
+   age), and time is measured back from that cohort's sampling time, so every pair is a "sample of size two". */
+function pairBins(start, w) {
+  const order = [], st = [start];
+  while (st.length) { const n = st.pop(); order.push(n); for (const c of n.children) st.push(c); }
+  const maps = new Map(), hist = new Map();
+  let total = 0;
+  const key = x => Math.round(-x * 1000) / 1000;
+  for (let i = order.length - 1; i >= 0; i--) {
+    const n = order[i];
+    if (!n.children.length) { maps.set(n, new Map([[key(n.x), 1]])); continue; }
+    if (n.children.length === 1) { maps.set(n, maps.get(n.children[0])); maps.delete(n.children[0]); continue; }
+    const kids = n.children.map(c => maps.get(c)).sort((a, b) => b.size - a.size);
+    const big = kids[0];
+    const sq = new Map(); // per age: sum of squares of child counts
+    for (const m of kids) for (const [a, c] of m) sq.set(a, (sq.get(a) || 0) + c * c);
+    for (const m of kids.slice(1)) for (const [a, c] of m) big.set(a, (big.get(a) || 0) + c);
+    for (const [a, S] of big) {
+      const pairs = (S * S - (sq.get(a) || 0)) / 2;
+      if (pairs > 0) {
+        const t = -n.x - a, j = binIndex(t, w);
+        hist.set(j, (hist.get(j) || 0) + pairs); total += pairs;
+      }
+    }
+    n.children.forEach(c => maps.delete(c));
+    maps.set(n, big);
+  }
+  if (!total) return { bins: [], total: 0 };
+  const jmax = Math.max(...hist.keys());
+  const bins = [];
+  for (let j = 0; j <= jmax; j++) { const c = hist.get(j) || 0; bins.push({ x0: -j * w, x1: -(j + 1) * w, v: c / (total * w), n: c }); }
+  return { bins, total };
+}
+function psiFromNe(ne, tmax) { // Ψ(t) = (1/Ne(t)) exp(-∫0^t 1/Ne), tabulated
+  const N = 1500, dt = tmax / N, ts = [], vs = [];
+  let I = 0;
+  for (let i = 0; i <= N; i++) {
+    const t = i * dt, r = 1 / ne(t);
+    ts.push(t); vs.push(r * Math.exp(-I));
+    I += r * dt;
+  }
+  return t => { const i = Math.min(N, Math.max(0, Math.round(t / dt))); return vs[i]; };
+}
+
+function renderCurvePlot(D, cfg) {
+  const host = $(cfg.host);
+  const W = Math.max(320, host.clientWidth || $("panels").clientWidth), H = 280;
+  const showLabels = state.labels && D.tipsInView <= 70;
+  const m = { l: 10, r: showLabels ? 110 : 16, t: 16, b: 30 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const sx = v => m.l + (v - D.X0) / (D.X1 - D.X0) * iw;
+  const showTh = $("optTheory").checked;
+  // y range: theory fully in view, observed up to its 97th percentile or 2× the theory max
+  const obs = cfg.series.flatMap(s => s.pts.map(p => p.v)).filter(v => isFinite(v)).sort((a, b) => a - b);
+  let tmax = 0;
+  if (showTh) {
+    for (const s of cfg.series) if (s.th) { if (s.th.pts) for (const b of s.th.pts) tmax = Math.max(tmax, b.v); else for (let i = 0; i <= 60; i++) { const v = thAt(s.th, D.X0 + (D.X1 - D.X0) * i / 60); if (isFinite(v)) tmax = Math.max(tmax, v); } }
+    for (const e of cfg.extra || []) for (let i = 0; i <= 60; i++) { const v = e.f(-(D.X0 + (D.X1 - D.X0) * i / 60)); if (isFinite(v)) tmax = Math.max(tmax, v); }
+  }
+  const q = obs.length ? obs[Math.min(obs.length - 1, Math.floor(obs.length * 0.97))] : 1;
+  let vmax = Math.max(tmax * 1.15, tmax ? Math.min(q, 2 * tmax) : q) || 1;
+  const sy = v => m.t + ih - Math.min(1.02, Math.max(0, v / vmax)) * ih;
+  const g = [];
+  for (const t of niceTicks(D.X0, D.X1, Math.max(3, Math.round(iw / 110))))
+    g.push(`<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="#eee"/><text x="${sx(t)}" y="${H - m.b + 15}" text-anchor="middle">${fmtTick(state.beforePresent ? -t : t)}</text>`);
+  for (const v of niceTicks(0, vmax, 4).filter(v => sy(v) > m.t + 12)) g.push(`<line x1="${m.l}" x2="${W - m.r}" y1="${sy(v)}" y2="${sy(v)}" stroke="#f0f0f0"/><text x="${m.l + 2}" y="${sy(v) - 3}">${fmtTick(v)}</text>`);
+  g.push(`<text x="${W - m.r}" y="${H - 3}" text-anchor="end">${cfg.xlabel}</text>`);
+  g.push(`<text class="ink" x="${m.l + 2}" y="${m.t - 4}">${cfg.ylabel}</text>`);
+  g.push(`<defs><clipPath id="clip-${cfg.mode}"><rect x="${m.l}" y="${m.t - 4}" width="${iw + 6}" height="${ih + 8}"/></clipPath></defs><g clip-path="url(#clip-${cfg.mode})" fill="none">`);
+  const curve = (f, c, dash, wdt) => {
+    let d = "";
+    for (let i = 0; i <= 240; i++) { const x = D.X0 + (D.X1 - D.X0) * i / 240; const v = f(-x); if (!isFinite(v)) continue; d += (d ? "L" : "M") + sx(x).toFixed(1) + " " + sy(v).toFixed(1); }
+    return `<path d="${d}" stroke="${c}" stroke-width="${wdt}" stroke-dasharray="${dash}"/>`;
+  };
+  if (showTh) for (const e of cfg.extra || []) g.push(curve(e.f, e.c, e.dash, 1.5));
+  for (const s of cfg.series.slice().sort((a, b) => isTrue(b.p) - isTrue(a.p))) {
+    if (showTh && s.th) g.push(`<path d="${thPath(s.th, sx, sy, D)}" stroke="${s.c}" stroke-width="1.75" stroke-dasharray="6 4"/>`);
+    if (s.pts.length) g.push(`<path d="${s.pts.map((t, i) => (i ? "L" : "M") + sx((t.x0 + t.x1) / 2).toFixed(1) + " " + sy(t.v).toFixed(1)).join("")}" stroke="${s.c}" stroke-width="1.5" stroke-linejoin="round"/>`);
+  }
+  g.push(`</g><g class="lov" pointer-events="none"></g>`);
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="${esc(cfg.aria)}">${g.join("")}</svg>`;
+  $(cfg.legend).innerHTML = cfg.series.map(s => `<span><b style="background:${s.c}"></b>${esc(s.p.label)}</span>`).join("") +
+    (showTh ? `<span style="color:var(--muted)">solid: observed</span><span style="color:var(--muted)"><b style="height:0;border-top:2px dashed #888;background:none"></b>dashed: ${cfg.thLabel || "theory"}</span>` +
+      (cfg.extra || []).map(e => `<span style="color:var(--muted)"><b style="height:0;border-top:2px dashed ${e.c};background:none"></b>${e.label}</span>`).join("") : "");
+  (state.tp = state.tp || {})[cfg.mode] = { cfg, sx, sy, m, W, H, D };
+}
+function curveHover(e, mode) {
+  const L = state.tp && state.tp[mode]; if (!L) return;
+  const svg = $(L.cfg.host).querySelector("svg"); if (!svg) return;
+  const [mx] = svgPoint(svg, e);
+  if (mx < L.m.l || mx > L.W - L.m.r) { curveLeave(mode); return; }
+  const x = L.D.X0 + (mx - L.m.l) / (L.W - L.m.l - L.m.r) * (L.D.X1 - L.D.X0);
+  const th = $("optTheory").checked;
+  let h = `<line x1="${mx}" x2="${mx}" y1="${L.m.t}" y2="${L.H - L.m.b}" stroke="#333" stroke-dasharray="3 3"/>`;
+  const rows = L.cfg.series.map(s => {
+    const b = stepAt(s.pts, x);
+    if (b) h += `<circle cx="${mx}" cy="${L.sy(b.v)}" r="4.5" fill="${s.c}" stroke="#fff" stroke-width="2"/>`;
+    const sw = `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${s.c};margin-right:5px"></span>`;
+    return `<tr><td>${sw}${esc(s.p.label)}</td><td class="n">${b ? L.cfg.fmt(b.v) : "–"}</td><td class="n m">${th && s.th && isFinite(thAt(s.th, x)) ? L.cfg.fmt(thAt(s.th, x)) : ""}</td><td class="n m">${b ? L.cfg.count(b) : ""}</td></tr>`;
+  }).join("");
+  const extra = th ? (L.cfg.extra || []).map(ex => `<tr class="m"><td>${ex.label}</td><td></td><td class="n">${L.cfg.fmt(ex.f(-x))}</td><td></td></tr>`).join("") : "";
+  svg.querySelector(".lov").innerHTML = h;
+  const t = state.beforePresent ? -x : x;
+  tipShow(`<div class="h">${fmt(t)} ${L.cfg.tunit}</div><table><tr class="m"><td>tree</td><td class="n">observed</td><td class="n">${th ? "theory" : ""}</td><td class="n">bin</td></tr>${rows}${extra}</table>`, e);
+  if (L.cfg.guide) { state.hoverX = x; state.hoverName = null; overlays(); }
+}
+function curveLeave(mode) {
+  const L = state.tp && state.tp[mode];
+  const svg = L && $(L.cfg.host).querySelector("svg"); if (svg) svg.querySelector(".lov").innerHTML = "";
+  $("tip").style.display = "none";
+  if (state.hoverX != null) { state.hoverX = null; overlays(); }
+}
+for (const [mode, host] of [["mut", "mutplot"], ["psi", "psiplot"]]) {
+  $(host).addEventListener("mousemove", e => curveHover(e, mode));
+  $(host).addEventListener("mouseleave", () => curveLeave(mode));
+}
+
+function renderFig45(D) {
+  const z = state.zoom, w = Math.max(1e-6, +$("binSize").value || 10);
+  const truth = {}; for (const p of state.panels) Object.assign(truth, paramsOf(p).tru);
+  const where = z ? `Within clade ${z.name} (${z.tipCount} tips). ` : "";
+  const items = state.panels.map(p => { const n = z ? p.byName.get(z.name) : p.root; return n ? { p, n, c: seriesColor(p), E: treeEvents(n) } : null; }).filter(Boolean);
+  const xlabel = state.beforePresent ? "generations before present" : "divergence";
+
+  // Fig. 4: U_e(t) = Ud·e^{-st} (only deleterious mutations are on these trees, so U_n = 0)
+  renderCurvePlot(D, {
+    mode: "mut", host: "mutplot", thLabel: "model, given each tree's classes", legend: "mutlegend", aria: "Effective deleterious mutation rate through time",
+    ylabel: "Uₑ(t), per lineage per generation", xlabel, tunit: state.beforePresent ? "generations ago" : "", guide: true,
+    fmt: v => fmtP(v), count: b => `${b.n} mut. / ${fmt(b.ex)} lineage-gens`,
+    series: items.map(it => ({ p: it.p, c: it.c, pts: mutBins(it.n, it.E, w), th: treeTheory(it.p, it.n, w, truth, "ue") })),
+    extra: isFinite(truth.Ud) && isFinite(truth.s) ? [{ f: t => truth.Ud * Math.exp(-truth.s * t), c: "#9a9a9a", dash: "2 3 8 3", label: "Nicolaisen–Desai formula, all tips sampled at time 0" }] : []
+  });
+  $("muthint").innerHTML = where + `Solid: observed rate of deleterious-mutation events along the lineages, in ${fmtTick(w)}-generation bins (mutation events in the bin ÷ total lineage time in the bin). Dashed: the model's rate for the lineages actually present, s·(mean class of the lineages), using each tree's fitness classes, so it accounts for tips sampled in the past. The true tree uses the true s, backsel its posterior mean, and the neutral fit its constant U<sub>d</sub>. Grey dash-dot: the paper's U<sub>e</sub>(t) = U<sub>n</sub> + U<sub>d</sub>e<sup>−st</sup> with U<sub>n</sub> = 0 (only deleterious mutations are on these trees), which assumes all tips were sampled at time 0. The neutral tree's mutations are evenly spaced on each branch, so its curve reflects that placement.`;
+
+  // Fig. 5: Ψ2(t), pairwise coalescence-time density
+  const psiData = items.map(it => ({ it, pb: pairBins(it.n, w) }));
+  const tmaxPair = Math.max(1, ...psiData.map(d => d.pb.bins.length ? -d.pb.bins[d.pb.bins.length - 1].x1 : 0), -D.X0);
+  const neFor = p => { const th = theoryFor(p, truth); return th ? (t => theoryAt(th, t)) : null; };
+  const extra = [];
+  if ([truth.Ud, truth.s, truth.N].every(isFinite)) {
+    const N0 = truth.N * Math.exp(-truth.Ud / truth.s);
+    extra.push({ f: t => Math.exp(-t / N0) / N0, c: "#9a9a9a", dash: "2 3 8 3", label: "EPS approximation (true values)" });
+  }
+  renderCurvePlot(D, {
+    mode: "psi", host: "psiplot", legend: "psilegend", aria: "Distribution of pairwise coalescence times",
+    ylabel: "ψ(t), probability density per generation", xlabel: "generations between sampling and coalescence (pairs sampled at the same time)", tunit: "generations after sampling", guide: false,
+    fmt: v => v.toPrecision(3), count: b => `${Math.round(b.n).toLocaleString("en-GB")} pairs`,
+    series: psiData.map(({ it, pb }) => { const ne = neFor(it.p); const f = ne ? psiFromNe(ne, tmaxPair) : null; return { p: it.p, c: it.c, pts: pb.bins, th: f ? { fn: f } : null }; }),
+    extra
+  });
+  const npairs = psiData[0] ? Math.round(psiData[0].pb.total) : 0;
+  $("psihint").innerHTML = where + `Solid: observed distribution of the coalescence time of two tips, from all ${npairs.toLocaleString("en-GB")} pairs of tips sampled at the same time (time measured back from their sampling time), in ${fmtTick(w)}-generation bins. Pairs within one tree share branches, so this is far from 6,000 independent replicates. Dashed: theory, ψ<sub>2</sub>(t) = (1/N<sub>e</sub>(t))·exp(−∫<sub>0</sub><sup>t</sup> 1/N<sub>e</sub>), using the Fig. 3 N<sub>e</sub>(t) for each tree. Grey dash-dot: the EPS approximation (Charlesworth et al. 1993), a constant N<sub>e</sub> = N·e<sup>−U<sub>d</sub>/s</sup>.`;
 }
 
 /* ---------- hover / click ---------- */
