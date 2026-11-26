@@ -216,14 +216,14 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     </div>
     <div class="plot">
       <div class="bar" style="margin:0"><h2>Cumulative coalescences</h2>
-        <label class="toggle" style="margin:0"><input type="checkbox" id="optCcLog"> Log scale</label></div>
+        <label class="toggle" style="margin:0"><input type="checkbox" id="optCcLog" checked> Log time axis</label></div>
       <p class="hint" id="cchint"></p>
       <div class="plegend" id="cclegend"></div>
       <div id="ccplot"></div>
     </div>
     <div class="plot">
       <div class="bar" style="margin:0"><h2>Cumulative mutations</h2>
-        <label class="toggle" style="margin:0"><input type="checkbox" id="optCmLog"> Log scale</label></div>
+        <label class="toggle" style="margin:0"><input type="checkbox" id="optCmLog" checked> Log time axis</label></div>
       <p class="hint" id="cmhint"></p>
       <div class="plegend" id="cmlegend"></div>
       <div id="cmplot"></div>
@@ -782,7 +782,9 @@ function renderTimePlot(D, mode) {
   const showLabels = state.labels && D.tipsInView <= 70;
   const m = { l: 10, r: showLabels ? 110 : 16, t: 14, b: 30 };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
-  const log = $(ids.log).checked;
+  const cumMode = mode === "ccoal" || mode === "cmut";
+  const logx = cumMode && $(ids.log).checked;
+  const log = !cumMode && $(ids.log).checked;
   const all = series.flatMap(s => s.steps.map(t => t.v)).filter(v => v > 0 && isFinite(v));
   let vmin = all.length ? Math.min(...all) : 1, vmax = all.length ? Math.max(...all) : 2;
   if (mode === "ltt") vmin = 1;
@@ -799,11 +801,24 @@ function renderTimePlot(D, mode) {
   }
   if (log) { vmin = vmin / 1.25; vmax = vmax * 1.25; } else { vmin = 0; vmax = vmax * 1.08; }
   if (vmax <= vmin) vmax = vmin * 2 || 1;
-  const sx = v => m.l + (v - D.X0) / (D.X1 - D.X0) * iw;
+  // log time axis (cumulative plots): t = generations before present, clamped below at the earliest event
+  let tlo = Infinity;
+  if (logx) for (const sr of series) for (const st of sr.steps) { const t = -st.x0; if (t > 0) tlo = Math.min(tlo, t); }
+  if (!isFinite(tlo)) tlo = 1;
+  tlo = 10 ** Math.floor(Math.log10(tlo));
+  const thi = Math.max(tlo * 10, -D.X0);
+  const L10 = Math.log10;
+  const sx = logx ? (v => m.l + iw * (1 - (L10(Math.max(-v, tlo)) - L10(tlo)) / (L10(thi) - L10(tlo))))
+                  : (v => m.l + (v - D.X0) / (D.X1 - D.X0) * iw);
+  const invx = logx ? (px => -(10 ** (L10(tlo) + (1 - (px - m.l) / iw) * (L10(thi) - L10(tlo)))))
+                    : (px => D.X0 + (px - m.l) / iw * (D.X1 - D.X0));
   const sy = log ? (v => m.t + ih - (Math.log(Math.max(v, vmin)) - Math.log(vmin)) / (Math.log(vmax) - Math.log(vmin)) * ih)
                  : (v => m.t + ih - (v - vmin) / (vmax - vmin) * ih);
   const g = [];
-  for (const t of niceTicks(D.X0, D.X1, Math.max(3, Math.round(iw / 110))))
+  let xt;
+  if (logx) { xt = []; for (let e = Math.floor(L10(tlo)); e <= Math.ceil(L10(thi)); e++) for (const f of [1, 2, 5]) { const t = f * 10 ** e; if (t >= tlo && t <= thi) xt.push(-t); } }
+  else xt = niceTicks(D.X0, D.X1, Math.max(3, Math.round(iw / 110)));
+  for (const t of xt)
     g.push(`<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="#eee"/><text x="${sx(t)}" y="${H - m.b + 15}" text-anchor="middle">${fmtTick(state.beforePresent ? -t : t)}</text>`);
   let yt;
   if (log) {
@@ -811,7 +826,7 @@ function renderTimePlot(D, mode) {
     for (let e = Math.floor(Math.log10(vmin)); e <= Math.ceil(Math.log10(vmax)); e++) for (const f of [1, 2, 5]) { const v = f * 10 ** e; if (v >= vmin && v <= vmax) yt.push(v); }
   } else yt = niceTicks(vmin, vmax, 4);
   for (const v of yt.filter(v => sy(v) > m.t + 12)) g.push(`<line x1="${m.l}" x2="${W - m.r}" y1="${sy(v)}" y2="${sy(v)}" stroke="#f0f0f0"/><text x="${m.l + 2}" y="${sy(v) - 3}">${fmtTick(v)}</text>`);
-  g.push(`<text x="${W - m.r}" y="${H - 3}" text-anchor="end">${state.beforePresent ? "generations before present" : "divergence"}</text>`);
+  g.push(`<text x="${W - m.r}" y="${H - 3}" text-anchor="end">${state.beforePresent ? "generations before present" : "divergence"}${logx ? " (log scale)" : ""}</text>`);
   g.push(`<text class="ink" x="${m.l + 2}" y="${m.t - 2}">${ids.ylab}${log ? " · log scale" : ""}</text>`);
   g.push(`<defs><clipPath id="clip-${mode}"><rect x="${m.l}" y="0" width="${iw + 6}" height="${H}"/></clipPath></defs><g clip-path="url(#clip-${mode})" fill="none">`);
   if (showTh && ndRef) g.push(`<path d="${thPath(ndRef, sx, sy, D)}" stroke="#9a9a9a" stroke-width="1.5" stroke-dasharray="2 3 8 3"/>`);
@@ -833,7 +848,7 @@ function renderTimePlot(D, mode) {
     g.push(`<circle cx="${sx(last.x1)}" cy="${sy(last.v)}" r="3.5" fill="${s.c}" stroke="#fff" stroke-width="1.5"/>`);
   }
   // direct labels at the oldest end of each line, nudged apart
-  const labs = series.filter(s => s.steps.length && mode !== "skyline").map(s => { const l = s.steps[s.steps.length - 1]; return { s, x: sx(l.x1), y: sy(l.v) }; }).sort((a, b) => a.y - b.y);
+  const labs = series.filter(s => s.steps.length && mode === "ltt").map(s => { const l = s.steps[s.steps.length - 1]; return { s, x: sx(l.x1), y: sy(l.v) }; }).sort((a, b) => a.y - b.y);
   let lastY = -1e9;
   for (const L of labs) {
     const y = Math.max(L.y - 8, lastY + 14); lastY = y;
@@ -841,14 +856,14 @@ function renderTimePlot(D, mode) {
   }
   g.push(`</g><g class="lov" pointer-events="none"></g>`);
   host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="${mode === "skyline" ? "Effective population size through time" : "Lineages through time"}">${g.join("")}</svg>`;
-  (state.tp = state.tp || {})[mode] = { series, sx, sy, m, W, H, D, mode };
+  (state.tp = state.tp || {})[mode] = { series, sx, sy, m, W, H, D, mode, invx, logx };
 }
 function lttHover(e, mode) {
   const L = state.tp && state.tp[mode]; if (!L) return;
   const svg = $(TP[mode].host).querySelector("svg"); if (!svg) return;
   const [mx] = svgPoint(svg, e);
   if (mx < L.m.l || mx > L.W - L.m.r) { lttLeave(mode); return; }
-  const x = L.D.X0 + (mx - L.m.l) / (L.W - L.m.l - L.m.r) * (L.D.X1 - L.D.X0);
+  const x = L.invx ? L.invx(mx) : L.D.X0 + (mx - L.m.l) / (L.W - L.m.l - L.m.r) * (L.D.X1 - L.D.X0);
   let h = `<line x1="${mx}" x2="${mx}" y1="${L.m.t}" y2="${L.H - L.m.b}" stroke="#333" stroke-dasharray="3 3"/>`;
   const sky = L.mode === "skyline";
   const rows = L.series.map(s => {
