@@ -183,7 +183,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   <section class="plots" id="plots" hidden>
     <div class="plot" id="paramsec">
       <h2>Parameters</h2>
-      <p class="hint">Posterior mean (dot) and 95% interval (bar) for each inferred tree. The dashed line is the true value. The neutral model has no s, and its N is an effective size, N<sub>e</sub>.</p>
+      <p class="hint">Posterior mean and 95% interval; dashed line = true value.</p>
       <div class="pgrid" id="paramplot"></div>
     </div>
     <div class="plot">
@@ -734,7 +734,7 @@ function renderTimePlot(D, mode) {
   const w = Math.max(1e-6, +$("binSize").value || 10);
   const truth = {}; for (const p of state.panels) Object.assign(truth, paramsOf(p).tru);
   const showTh = mode === "skyline" && $("optTheory").checked;
-  const ndRef = mode === "skyline" && [truth.Ud, truth.s, truth.N].every(isFinite) ? { Ud: truth.Ud, s: truth.s, N: truth.N } : null;
+  const ndRef = null;
   const series = state.panels.map(p => {
     const n = z ? p.byName.get(z.name) : p.root;
     if (!n) return null;
@@ -746,10 +746,10 @@ function renderTimePlot(D, mode) {
   }).filter(Boolean);
   const where = z ? `Within clade ${z.name} (${z.tipCount} tips). ` : "";
   $(ids.hint).innerHTML = where + (mode === "skyline"
-    ? `Solid: observed N<sub>e</sub>(t) from each tree, in ${fmtTick(w)}-generation bins: Σ C(k,2)·Δt ÷ coalescences in the bin, where k is the number of lineages (the inverse of the observed per-pair coalescence rate). Bins with no coalescence are skipped, so the line jumps across them. Dashed: the structured-coalescent prediction for the lineages actually present, using each tree's fitness classes. With a<sub>k</sub> lineages in class k, pairs coalesce at Σ C(a<sub>k</sub>,2)/(N·h<sub>k</sub>), where h<sub>k</sub> are the Poisson(U<sub>d</sub>/s) class frequencies. The true tree uses the true values, backsel its posterior means, and the neutral fit its constant N<sub>e</sub>. Grey dash-dot: the paper's formula N<sub>e</sub>(t) = N·exp(−(U<sub>d</sub>/s)(1−e<sup>−st</sup>)²) with the true values. It assumes every tip was sampled at time 0, so it only applies when nearly all tips are modern; tips sampled later in the past enter carrying mutations, which keeps lineages spread across classes.`
-    : "Each line counts the branches alive at each time: a tip adds a lineage, a coalescence removes one.") + " The time axis lines up with the trees above.";
+    ? `Solid: observed, Σ C(k,2)·Δt ÷ coalescences in each ${fmtTick(w)}-generation bin. Dashed: expected under the model, given each tree's fitness classes (true values for the true tree, posterior means for backsel, constant N<sub>e</sub> for neutral).`
+    : "Number of lineages alive at each time.");
   $(ids.legend).innerHTML = series.map(s => `<span><b style="background:${s.c}"></b>${esc(s.p.label)}</span>`).join("") +
-    (showTh ? `<span style="color:var(--muted)">solid: observed</span><span style="color:var(--muted)"><b style="height:0;border-top:2px dashed #888;background:none"></b>dashed: model, given each tree's classes</span>` + (ndRef ? `<span style="color:var(--muted)"><b style="height:0;border-top:2px dashed #9a9a9a;background:none"></b>grey dash-dot: Nicolaisen–Desai formula, all tips sampled at time 0</span>` : "") : "");
+    (showTh ? `<span style="color:var(--muted)">solid: observed</span><span style="color:var(--muted)"><b style="height:0;border-top:2px dashed #888;background:none"></b>dashed: expected</span>` : "");
   const W = Math.max(320, host.clientWidth || $("panels").clientWidth), H = 300;
   const showLabels = state.labels && D.tipsInView <= 70;
   const m = { l: 10, r: showLabels ? 110 : 16, t: 14, b: 30 };
@@ -1013,23 +1013,19 @@ function renderFig45(D) {
 
   // Fig. 4: U_e(t) = Ud·e^{-st} (only deleterious mutations are on these trees, so U_n = 0)
   renderCurvePlot(D, {
-    mode: "mut", host: "mutplot", thLabel: "model, given each tree's classes", legend: "mutlegend", aria: "Effective deleterious mutation rate through time",
+    mode: "mut", host: "mutplot", thLabel: "expected", legend: "mutlegend", aria: "Effective deleterious mutation rate through time",
     ylabel: "Uₑ(t), per lineage per generation", xlabel, tunit: state.beforePresent ? "generations ago" : "", guide: true,
     fmt: v => fmtP(v), count: b => `${b.n} mut. / ${fmt(b.ex)} lineage-gens`,
     series: items.map(it => ({ p: it.p, c: it.c, pts: mutBins(it.n, it.E, w), th: treeTheory(it.p, it.n, w, truth, "ue") })),
-    extra: isFinite(truth.Ud) && isFinite(truth.s) ? [{ f: t => truth.Ud * Math.exp(-truth.s * t), c: "#9a9a9a", dash: "2 3 8 3", label: "Nicolaisen–Desai formula, all tips sampled at time 0" }] : []
+    extra: []
   });
-  $("muthint").innerHTML = where + `Solid: observed rate of deleterious-mutation events along the lineages, in ${fmtTick(w)}-generation bins (mutation events in the bin ÷ total lineage time in the bin). Dashed: the model's rate for the lineages actually present, s·(mean class of the lineages), using each tree's fitness classes, so it accounts for tips sampled in the past. The true tree uses the true s, backsel its posterior mean, and the neutral fit its constant U<sub>d</sub>. Grey dash-dot: the paper's U<sub>e</sub>(t) = U<sub>n</sub> + U<sub>d</sub>e<sup>−st</sup> with U<sub>n</sub> = 0 (only deleterious mutations are on these trees), which assumes all tips were sampled at time 0. The neutral tree's mutations are evenly spaced on each branch, so its curve reflects that placement.`;
+  $("muthint").innerHTML = where + `Solid: observed, mutation events ÷ lineage-generations in each ${fmtTick(w)}-generation bin. Dashed: expected under the model, s × mean class of the lineages present (constant U<sub>d</sub> for neutral).`;
 
   // Fig. 5: Ψ2(t), pairwise coalescence-time density
   const psiData = items.map(it => ({ it, pb: pairBins(it.n, w) }));
   const tmaxPair = Math.max(1, ...psiData.map(d => d.pb.bins.length ? -d.pb.bins[d.pb.bins.length - 1].x1 : 0), -D.X0);
   const neFor = p => { const th = theoryFor(p, truth); return th ? (t => theoryAt(th, t)) : null; };
   const extra = [];
-  if ([truth.Ud, truth.s, truth.N].every(isFinite)) {
-    const N0 = truth.N * Math.exp(-truth.Ud / truth.s);
-    extra.push({ f: t => Math.exp(-t / N0) / N0, c: "#9a9a9a", dash: "2 3 8 3", label: "EPS approximation (true values)" });
-  }
   renderCurvePlot(D, {
     mode: "psi", host: "psiplot", legend: "psilegend", aria: "Distribution of pairwise coalescence times",
     ylabel: "ψ(t), probability density per generation", xlabel: "generations between sampling and coalescence (pairs sampled at the same time)", tunit: "generations after sampling", guide: false,
@@ -1038,7 +1034,7 @@ function renderFig45(D) {
     extra
   });
   const npairs = psiData[0] ? Math.round(psiData[0].pb.total) : 0;
-  $("psihint").innerHTML = where + `Solid: observed distribution of the coalescence time of two tips, from all ${npairs.toLocaleString("en-GB")} pairs of tips sampled at the same time (time measured back from their sampling time), in ${fmtTick(w)}-generation bins. Pairs within one tree share branches, so this is far from 6,000 independent replicates. Dashed: theory, ψ<sub>2</sub>(t) = (1/N<sub>e</sub>(t))·exp(−∫<sub>0</sub><sup>t</sup> 1/N<sub>e</sub>), using the Fig. 3 N<sub>e</sub>(t) for each tree. Grey dash-dot: the EPS approximation (Charlesworth et al. 1993), a constant N<sub>e</sub> = N·e<sup>−U<sub>d</sub>/s</sup>.`;
+  $("psihint").innerHTML = where + `Solid: observed coalescence times of all ${npairs.toLocaleString("en-GB")} pairs of tips sampled at the same time, measured from sampling, in ${fmtTick(w)}-generation bins. Dashed: ψ<sub>2</sub>(t) = (1/N<sub>e</sub>(t))·exp(−∫<sub>0</sub><sup>t</sup>1/N<sub>e</sub>), with the paper's N<sub>e</sub>(t) (true values for the true tree, posterior means for backsel, constant N<sub>e</sub> for neutral).`;
 }
 
 /* ---------- hover / click ---------- */
