@@ -740,16 +740,17 @@ function renderTimePlot(D, mode) {
     if (!n) return null;
     const E = treeEvents(n);
     let steps;
-    if (mode === "skyline") steps = fixedBins(E, w);
+    let th3 = null;
+    if (mode === "skyline") { const r = fig3Series(p, n, w, truth); steps = r.steps; th3 = r.th; }
     else steps = E.xs.map((x, i) => ({ x0: x, x1: i + 1 < E.xs.length ? E.xs[i + 1] : E.rootX, v: E.ks[i] })).filter(s => s.v > 0);
-    return { p, E, steps, c: seriesColor(p), th: mode === "skyline" ? treeTheory(p, n, w, truth, "ne") : null };
+    return { p, E, steps, c: seriesColor(p), th: th3 };
   }).filter(Boolean);
   const where = z ? `Within clade ${z.name} (${z.tipCount} tips). ` : "";
   $(ids.hint).innerHTML = where + (mode === "skyline"
-    ? `Solid: observed, Σ C(k,2)·Δt ÷ coalescences in each ${fmtTick(w)}-generation bin. Dashed: expected under the model, given each tree's fitness classes (true values for the true tree, posterior means for backsel, constant N<sub>e</sub> for neutral).`
+    ? `Solid: observed, for pairs of sampled tips: pair-generations not yet coalesced ÷ pairs coalescing, per ${fmtTick(w)}-generation bin. Dashed: theory for the same pairs, N·exp(−(U<sub>d</sub>/s)(1−e<sup>−su</sup>)(1−e<sup>−sv</sup>)), with u, v the time since each tip was sampled (eq. 7 when u = v).`
     : "Number of lineages alive at each time.");
   $(ids.legend).innerHTML = series.map(s => `<span><b style="background:${s.c}"></b>${esc(s.p.label)}</span>`).join("") +
-    (showTh ? `<span style="color:var(--muted)">solid: observed</span><span style="color:var(--muted)"><b style="height:0;border-top:2px dashed #888;background:none"></b>dashed: expected</span>` : "");
+    (showTh ? `<span style="color:var(--muted)">solid: observed</span><span style="color:var(--muted)"><b style="height:0;border-top:2px dashed #888;background:none"></b>dashed: theory</span>` : "");
   const W = Math.max(320, host.clientWidth || $("panels").clientWidth), H = 300;
   const showLabels = state.labels && D.tipsInView <= 70;
   const m = { l: 10, r: showLabels ? 110 : 16, t: 14, b: 30 };
@@ -765,8 +766,8 @@ function renderTimePlot(D, mode) {
     if (tv.length) {
       const tmax = Math.max(...tv), tmin = Math.min(...tv);
       vmin = Math.min(vmin, tmin);
-      const sorted = all.slice().sort((a, b) => a - b), q95 = sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : tmax;
-      vmax = Math.max(tmax, Math.min(vmax, Math.max(q95, 2.5 * tmax)));
+      const sorted = all.slice().sort((a, b) => a - b), q75 = sorted.length ? sorted[Math.floor(sorted.length * 0.75)] : tmax;
+      vmax = Math.max(tmax * 1.2, Math.min(vmax, Math.max(2 * q75, 2.5 * tmax))); // single-tree spikes run off the top
     }
   }
   if (log) { vmin = vmin / 1.25; vmax = vmax * 1.25; } else { vmin = 0; vmax = vmax * 1.08; }
@@ -831,7 +832,7 @@ function lttHover(e, mode) {
     if (!sky) return `<tr><td>${sw}${esc(s.p.label)}</td><td class="n">${st.v}</td></tr>`;
     const a = state.beforePresent ? -st.x0 : st.x0, b = state.beforePresent ? -st.x1 : st.x1;
     const th = s.th && $("optTheory").checked && isFinite(thAt(s.th, x)) ? fmtP(thAt(s.th, x)) : "";
-    return `<tr><td>${sw}${esc(s.p.label)}</td><td class="n">${fmtP(st.v)}</td><td class="n m">${th}</td><td class="n m">${st.n} coal. in ${fmt(a)}–${fmt(b)}</td></tr>`;
+    return `<tr><td>${sw}${esc(s.p.label)}</td><td class="n">${fmtP(st.v)}</td><td class="n m">${th}</td><td class="n m">${Math.round(st.n).toLocaleString("en-GB")} pairs in ${fmt(a)}–${fmt(b)}</td></tr>`;
   }).join("");
   svg.querySelector(".lov").innerHTML = h;
   const t = state.beforePresent ? -x : x;
@@ -857,6 +858,124 @@ function renderPlots(D) {
   renderTimePlot(D, "skyline");
   renderFig45(D);
   renderTimePlot(D, "ltt");
+}
+
+/* ---------- per-sampled-individual quantities, as defined in Nicolaisen & Desai (2012) ----------
+   Fig. 3: N_e(t) is the inverse coalescence rate of a pair of sampled tips. Observed per bin:
+     (pair-generations at risk) ÷ (pairs coalescing), counting every pair of tips once both are sampled.
+   Theory for a pair sampled u and v generations before t (independent-lineage approximation, eq. 7):
+     1/N_e = (1/N)·exp((Ud/s)(1−e^{−su})(1−e^{−sv})); with u = v this is eq. 7 exactly.
+   Fig. 4: U_e(t) is the mutation rate along the ancestral line of a sampled tip. Observed per bin:
+     (mutation events on tips' ancestral lines) ÷ (time on those lines); theory Ud·e^{−su}, u = time since sampling. */
+const _cache = new Map();
+function cached(key, fn) { if (!_cache.has(key)) { if (_cache.size > 200) _cache.clear(); _cache.set(key, fn()); } return _cache.get(key); }
+const ageKey = x => Math.round(-x * 1000) / 1000;
+
+function postorder(start) {
+  const order = [], st = [start];
+  while (st.length) { const n = st.pop(); order.push(n); for (const c of n.children) st.push(c); }
+  return order.reverse();
+}
+function addBin(map, j, f, v) { let b = map.get(j); if (!b) map.set(j, b = { ex: 0, obs: 0, exp: 0 }); b[f] += v; }
+function binsOut(map, w, flat) {
+  return [...map.entries()].sort((a, b) => a[0] - b[0]).map(([j, b]) => ({ x0: -j * w, x1: -(j + 1) * w, ...b }));
+}
+
+function pairRate(P, u, v) { const lam = P.Ud / P.s; return Math.exp(lam * (1 - Math.exp(-P.s * u)) * (1 - Math.exp(-P.s * v))) / P.N; }
+
+// returns [{x0,x1, ex (pair-gens at risk), obs (pairs coalescing), exp (expected coalescences under P)}]
+function pairHazard(start, w, P) {
+  const order = postorder(start), maps = new Map(), coal = new Map(); // coal: "a|b" -> [[t, count], ...]
+  const size = new Map(); // cohort sizes
+  for (const n of order) {
+    if (!n.children.length) { const a = ageKey(n.x); maps.set(n, new Map([[a, 1]])); size.set(a, (size.get(a) || 0) + 1); continue; }
+    if (n.children.length === 1) { maps.set(n, maps.get(n.children[0])); maps.delete(n.children[0]); continue; }
+    const t = -n.x, kids = n.children.map(c => maps.get(c));
+    for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++)
+      for (const [a, ca] of kids[i]) for (const [b, cb] of kids[j]) {
+        const key = a <= b ? a + "|" + b : b + "|" + a;
+        let l = coal.get(key); if (!l) coal.set(key, l = []); l.push([t, ca * cb]);
+      }
+    kids.sort((x, y) => y.size - x.size);
+    const big = kids[0];
+    for (const m of kids.slice(1)) for (const [a, c] of m) big.set(a, (big.get(a) || 0) + c);
+    n.children.forEach(c => maps.delete(c)); maps.set(n, big);
+  }
+  const bins = new Map(), ages = [...size.keys()].sort((a, b) => a - b);
+  const sub = Math.max(w / 8, 1e-9);
+  for (let i = 0; i < ages.length; i++) for (let k = i; k < ages.length; k++) {
+    const a = ages[i], b = ages[k], key = a + "|" + b;
+    let R = a === b ? size.get(a) * (size.get(a) - 1) / 2 : size.get(a) * size.get(b);
+    if (!R) continue;
+    const ev = (coal.get(key) || []).sort((x, y) => x[0] - y[0]);
+    let t1 = Math.max(a, b);
+    for (const [t2, c] of ev) {
+      if (t2 > t1 && R > 0) {
+        for (let j = Math.floor(t1 / w); j * w < t2; j++) {
+          const lo = Math.max(t1, j * w), hi = Math.min(t2, (j + 1) * w);
+          if (hi <= lo) continue;
+          addBin(bins, j, "ex", R * (hi - lo));
+          if (P) { const m = Math.max(1, Math.ceil((hi - lo) / sub)), dt = (hi - lo) / m; let I = 0; for (let q = 0; q < m; q++) { const t = lo + (q + 0.5) * dt; I += pairRate(P, t - a, t - b) * dt; } addBin(bins, j, "exp", R * I); }
+        }
+      }
+      addBin(bins, binIndex(t2, w), "obs", c);
+      R -= c; t1 = Math.max(t1, t2);
+    }
+  }
+  return binsOut(bins, w);
+}
+
+// returns [{x0,x1, ex (lineage-gens summed over tips), obs (mutations on tips' lines), exp (expected under P)}]
+function ancestryMut(start, w, P) {
+  const order = postorder(start), maps = new Map(), bins = new Map();
+  for (const n of order) {
+    let m;
+    if (!n.children.length) m = new Map([[ageKey(n.x), 1]]);
+    else {
+      const kids = n.children.map(c => maps.get(c)).sort((x, y) => y.size - x.size);
+      m = kids[0];
+      for (const k of kids.slice(1)) for (const [a, c] of k) m.set(a, (m.get(a) || 0) + c);
+      n.children.forEach(c => maps.delete(c));
+    }
+    let tot = 0; for (const c of m.values()) tot += c;
+    if (n.children.length === 1) addBin(bins, binIndex(-n.x, w), "obs", tot); // a mutation on every descendant tip's line
+    if (n !== start && n.parent) {
+      const t1 = -n.x, t2 = -n.parent.x;
+      for (let j = Math.floor(t1 / w); j * w < t2; j++) {
+        const lo = Math.max(t1, j * w), hi = Math.min(t2, (j + 1) * w);
+        if (hi <= lo) continue;
+        addBin(bins, j, "ex", tot * (hi - lo));
+        if (P) { let e = 0; for (const [a, c] of m) e += c * (P.Ud / P.s) * (Math.exp(-P.s * (lo - a)) - Math.exp(-P.s * (hi - a))); addBin(bins, j, "exp", e); }
+      }
+    }
+    maps.set(n, m);
+  }
+  return binsOut(bins, w);
+}
+
+// theory params for a tree: closed form {Ud,s,N} or {flat}
+function paramsFor(p, truth, which) {
+  const th = theoryFor(p, truth);
+  if (!th) return null;
+  if (th.flat !== undefined) {
+    if (which === "ne") return { flat: th.flat };
+    const est = paramsOf(p).est; return est.Ud ? { flat: est.Ud.mean } : null;
+  }
+  return th;
+}
+function fig3Series(p, n, w, truth) {
+  const P = paramsFor(p, truth, "ne");
+  const bins = cached(`ne|${p.id}|${n.name}|${w}|${P && P.flat === undefined ? [P.Ud, P.s, P.N] : "-"}`, () => pairHazard(n, w, P && P.flat === undefined ? P : null));
+  const steps = bins.filter(b => b.obs > 0 && b.ex > 0).map(b => ({ x0: b.x0, x1: b.x1, v: b.ex / b.obs, n: b.obs }));
+  const th = !P ? null : P.flat !== undefined ? { flat: P.flat } : { pts: bins.filter(b => b.exp > 0).map(b => ({ x0: b.x0, x1: b.x1, v: b.ex / b.exp })) };
+  return { steps, th };
+}
+function fig4Series(p, n, w, truth) {
+  const P = paramsFor(p, truth, "ue");
+  const bins = cached(`ue|${p.id}|${n.name}|${w}|${P && P.flat === undefined ? [P.Ud, P.s] : "-"}`, () => ancestryMut(n, w, P && P.flat === undefined ? P : null));
+  const pts = bins.filter(b => b.ex > 0).map(b => ({ x0: b.x0, x1: b.x1, v: b.obs / b.ex, n: b.obs, ex: b.ex }));
+  const th = !P ? null : P.flat !== undefined ? { flat: P.flat } : { pts: bins.filter(b => b.ex > 0).map(b => ({ x0: b.x0, x1: b.x1, v: b.exp / b.ex })) };
+  return { pts, th };
 }
 
 /* ---------- Nicolaisen & Desai (2012) Figs. 4 and 5 ---------- */
@@ -1013,13 +1132,13 @@ function renderFig45(D) {
 
   // Fig. 4: U_e(t) = Ud·e^{-st} (only deleterious mutations are on these trees, so U_n = 0)
   renderCurvePlot(D, {
-    mode: "mut", host: "mutplot", thLabel: "expected", legend: "mutlegend", aria: "Effective deleterious mutation rate through time",
+    mode: "mut", host: "mutplot", thLabel: "theory", legend: "mutlegend", aria: "Effective deleterious mutation rate through time",
     ylabel: "Uₑ(t), per lineage per generation", xlabel, tunit: state.beforePresent ? "generations ago" : "", guide: true,
-    fmt: v => fmtP(v), count: b => `${b.n} mut. / ${fmt(b.ex)} lineage-gens`,
-    series: items.map(it => ({ p: it.p, c: it.c, pts: mutBins(it.n, it.E, w), th: treeTheory(it.p, it.n, w, truth, "ue") })),
+    fmt: v => fmtP(v), count: b => `${Math.round(b.n)} mut. / ${Math.round(b.ex).toLocaleString("en-GB")} gens`,
+    series: items.map(it => { const r = fig4Series(it.p, it.n, w, truth); return { p: it.p, c: it.c, pts: r.pts, th: r.th }; }),
     extra: []
   });
-  $("muthint").innerHTML = where + `Solid: observed, mutation events ÷ lineage-generations in each ${fmtTick(w)}-generation bin. Dashed: expected under the model, s × mean class of the lineages present (constant U<sub>d</sub> for neutral).`;
+  $("muthint").innerHTML = where + `Solid: observed, mutation events on each sampled tip's ancestral line ÷ time on those lines, per ${fmtTick(w)}-generation bin. Dashed: theory, U<sub>d</sub>e<sup>−su</sup>, with u the time since that tip was sampled.`;
 
   // Fig. 5: Ψ2(t), pairwise coalescence-time density
   const psiData = items.map(it => ({ it, pb: pairBins(it.n, w) }));
