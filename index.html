@@ -78,6 +78,20 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .zbtn:disabled { opacity: .45; cursor: default; }
 .panel { border-top: 1px solid var(--rule); padding-top: 8px; margin-top: 10px; }
 .ph { display: flex; gap: 10px; align-items: baseline; }
+.chip i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+.plots { border-top: 1px solid var(--rule); margin-top: 18px; padding-top: 4px; }
+.plot { margin-top: 18px; }
+.plot h2 { font-size: 18px; font-weight: 400; margin: 0 0 2px; }
+.plot .hint { font-size: 12px; color: var(--muted); margin: 0 0 8px; line-height: 1.4; max-width: 110ch; }
+.plot .hint:empty { display: none; }
+.plegend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; margin: 4px 0 6px; align-items: center; }
+.plegend span { display: inline-flex; align-items: center; gap: 6px; }
+.plegend b { display: inline-block; width: 16px; height: 2px; border-radius: 1px; }
+.pgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 28px; }
+.pgrid svg, #lttplot svg { display: block; width: 100%; }
+.pgrid text, #lttplot text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.pgrid text.ink, #lttplot text.ink { fill: var(--ink); font-size: 12px; }
+.pgrid h4 { margin: 0 0 2px; font-size: 13px; font-weight: 700; }
 .chip { flex: 0 0 auto; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; padding: 3px 7px; border-radius: 3px; background: #eef4f8; color: var(--accent); }
 .ptitle { font-size: 14px; line-height: 1.4; }
 .pdesc { font-size: 12px; color: var(--muted); margin: 2px 0 0; line-height: 1.4; }
@@ -162,6 +176,20 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     </span>
   </div>
   <div id="panels"></div>
+  <section class="plots" id="plots" hidden>
+    <div class="plot" id="paramsec">
+      <h2>Parameters</h2>
+      <p class="hint">Posterior mean (dot) and 95% interval (bar) for each inferred tree. The dashed line is the true value. The neutral model has no s, and its N is an effective size, N<sub>e</sub>.</p>
+      <div class="pgrid" id="paramplot"></div>
+    </div>
+    <div class="plot">
+      <div class="bar" style="margin:0"><h2>Lineages through time</h2>
+        <label class="toggle" style="margin:0"><input type="checkbox" id="optLog" checked> Log scale</label></div>
+      <p class="hint" id="ltthint"></p>
+      <div class="plegend" id="lttlegend"></div>
+      <div id="lttplot"></div>
+    </div>
+  </section>
   <div id="empty" hidden>No trees loaded. Add Auspice v2 JSON files with the button on the left, or drop them here.</div>
 </main>
 <div id="tip"></div>
@@ -367,7 +395,7 @@ function niceTicks(a, b, target) {
 function renderAll() {
   const host = $("panels");
   $("empty").hidden = state.panels.length > 0;
-  if (!state.panels.length) { host.innerHTML = ""; return; }
+  if (!state.panels.length) { host.innerHTML = ""; host.dataset.ids = ""; $("plots").hidden = true; return; }
   const D = domains();
   const beforePresent = Math.max(...state.panels.map(p => p.root.xMaxSub)) <= 1e-9;
   state.beforePresent = beforePresent;
@@ -376,13 +404,14 @@ function renderAll() {
   if (host.dataset.ids !== want) {
     host.innerHTML = state.panels.map(p => `
       <section class="panel" data-id="${p.id}">
-        <div class="ph"><span class="chip">${esc(p.label)}</span><div>${p.titleShort ? `<div class="ptitle">${esc(p.titleShort)}</div>` : ""}${p.descShort ? `<div class="pdesc">${esc(p.descShort)}</div>` : ""}</div></div>
+        <div class="ph"><span class="chip"><i style="background:${seriesColor(p)}"></i>${esc(p.label)}</span><div>${p.titleShort ? `<div class="ptitle">${esc(p.titleShort)}</div>` : ""}${p.descShort ? `<div class="pdesc">${esc(p.descShort)}</div>` : ""}</div></div>
         <div class="pw"><svg role="img" aria-label="Phylogeny: ${esc(p.label)}"></svg></div>
       </section>`).join("");
     host.dataset.ids = want;
     host.querySelectorAll(".pw svg").forEach(svg => attachEvents(svg));
   }
   host.querySelectorAll(".panel").forEach((sec, k) => renderPanel(state.panels[k], sec.querySelector("svg"), D));
+  renderPlots(D);
   const z = state.zoom;
   $("zout").disabled = $("zroot").disabled = !z;
   $("zoomttl").textContent = z ? `Zoomed to clade ${z.name} · ${z.tipCount} tips · click a branch to zoom further` : "Phylogeny · click a branch to zoom all panels to that clade";
@@ -443,6 +472,191 @@ function renderPanel(p, svg, D) {
   svg.innerHTML = s.join("");
   p.view = { vis, sx, sy, m, W, H, D };
   drawOverlay(p, svg);
+}
+
+/* ---------- bottom plots ---------- */
+const SERIES = ["#257de0", "#f47230", "#00b894", "#f2a600", "#ee7fac", "#008a17"];
+const isTrue = p => /(^|·\s)true\b/.test(p.label);
+function seriesColor(p) {
+  if (isTrue(p)) return "#333333";
+  const others = state.panels.filter(q => !isTrue(q));
+  return SERIES[Math.max(0, others.indexOf(p)) % SERIES.length];
+}
+function tipShow(html, e) {
+  const el = $("tip"); el.innerHTML = html; el.style.display = "block";
+  const r = el.getBoundingClientRect();
+  let lx = e.clientX + 16, ly = e.clientY + 14;
+  if (lx + r.width > innerWidth - 8) lx = e.clientX - r.width - 16;
+  if (ly + r.height > innerHeight - 8) ly = Math.max(8, innerHeight - r.height - 8);
+  el.style.left = lx + "px"; el.style.top = ly + "px";
+}
+
+/* parameters: meta.parameters / meta.true_parameters if present, otherwise parsed from the title,
+   e.g. "Ud = 0.0203 (0.0159 to 0.0252), s = ... True values: Ud = 0.02, s = 0.01, N = 1250." */
+const NUM = "[-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?";
+const PRE = new RegExp(`(?:^|[\\s,:(])(Ud|s|N_e|N)\\s*=\\s*(${NUM})(?:\\s*\\((${NUM})\\s*to\\s*(${NUM})\\))?`, "g");
+function paramsOf(p) {
+  if (p._params) return p._params;
+  const est = {}, tru = {};
+  const m = p.meta;
+  if (m.parameters) for (const [k, v] of Object.entries(m.parameters)) est[k] = typeof v === "object" ? { mean: +v.mean, lo: +v.lo, hi: +v.hi } : { mean: +v };
+  if (m.true_parameters) for (const [k, v] of Object.entries(m.true_parameters)) tru[k] = +v;
+  if (!m.parameters || !m.true_parameters) {
+    const t = m.title || "", i = t.indexOf("True values");
+    const a = i >= 0 ? t.slice(0, i) : t, b = i >= 0 ? t.slice(i) : "";
+    if (!m.parameters) for (const x of a.matchAll(PRE)) if (x[3] !== undefined) est[x[1]] = { mean: +x[2], lo: +x[3], hi: +x[4] };
+    if (!m.true_parameters) for (const x of b.matchAll(PRE)) tru[x[1]] = +x[2];
+  }
+  return (p._params = { est, tru });
+}
+const PARAMS = [
+  { key: "Ud", label: "U<tspan baseline-shift='sub' font-size='9'>d</tspan>", html: "U<sub>d</sub>", alts: ["Ud"] },
+  { key: "s", label: "s", html: "s", alts: ["s"] },
+  { key: "N", label: "N", html: "N", alts: ["N", "N_e"] }
+];
+function renderParams() {
+  const host = $("paramplot");
+  const truth = {};
+  for (const p of state.panels) Object.assign(truth, paramsOf(p).tru);
+  const rows = state.panels.filter(p => Object.keys(paramsOf(p).est).length);
+  if (!rows.length) { $("paramsec").hidden = true; return; }
+  $("paramsec").hidden = false;
+  const out = [];
+  for (const P of PARAMS) {
+    const vals = [];
+    const items = rows.map(p => {
+      const e = paramsOf(p).est;
+      const k = P.alts.find(a => e[a]);
+      if (k) vals.push(isFinite(e[k].lo) ? e[k].lo : e[k].mean, isFinite(e[k].hi) ? e[k].hi : e[k].mean, e[k].mean);
+      return { p, k, e: k ? e[k] : null };
+    });
+    const tv = truth[P.key];
+    if (tv !== undefined) vals.push(tv);
+    if (!vals.length) continue;
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    const pad = (hi - lo || Math.abs(hi) || 1) * 0.12; lo -= pad; hi += pad;
+    const W = 320, rowH = 30, mL = 70, mR = 70, top = 24, H = top + items.length * rowH + 26;
+    const sx = v => mL + (v - lo) / (hi - lo) * (W - mL - mR);
+    const g = [];
+    for (const t of niceTicks(lo, hi, 4)) g.push(`<line x1="${sx(t)}" x2="${sx(t)}" y1="${top - 6}" y2="${H - 22}" stroke="#eee"/><text x="${sx(t)}" y="${H - 8}" text-anchor="middle">${fmtTick(t)}</text>`);
+    if (tv !== undefined) g.push(`<line x1="${sx(tv)}" x2="${sx(tv)}" y1="${top - 8}" y2="${H - 22}" stroke="#333" stroke-width="1.5" stroke-dasharray="4 3"/><text class="ink" x="${sx(tv)}" y="${top - 12}" text-anchor="middle">true ${fmt(tv)}</text>`);
+    items.forEach((it, r) => {
+      const y = top + r * rowH + rowH / 2;
+      const c = seriesColor(it.p);
+      const nm = esc(it.p.label.replace(/^inferred · /, ""));
+      g.push(`<text class="ink" x="0" y="${y + 4}">${nm}</text>`);
+      if (!it.e) { g.push(`<text x="${mL}" y="${y + 4}" font-style="italic">not in this model</text>`); return; }
+      const e = it.e, hasI = isFinite(e.lo) && isFinite(e.hi);
+      const covers = hasI && tv !== undefined ? (tv >= e.lo && tv <= e.hi) : null;
+      const tipHtml = `<div class="h">${esc(it.p.label)} · ${it.k === "N_e" ? "N<sub>e</sub>" : P.html}</div><div>mean ${fmt(e.mean)}${hasI ? ` · 95% interval ${fmt(e.lo)} to ${fmt(e.hi)}` : ""}</div>${tv !== undefined ? `<div class="m">true ${P.key} = ${fmt(tv)}${covers === null ? "" : covers ? " · inside the interval" : " · outside the interval"}</div>` : ""}`;
+      g.push(`<g data-tip="${esc(tipHtml)}"><rect x="${mL - 4}" y="${y - rowH / 2}" width="${W - mL - mR + 8}" height="${rowH}" fill="transparent"/>`);
+      if (hasI) g.push(`<line x1="${sx(e.lo)}" x2="${sx(e.hi)}" y1="${y}" y2="${y}" stroke="${c}" stroke-width="3" stroke-linecap="round"/>`);
+      g.push(`<circle cx="${sx(e.mean)}" cy="${y}" r="5" fill="${c}" stroke="#fff" stroke-width="2"/></g>`);
+      g.push(`<text x="${W - mR + 8}" y="${y + 4}">${fmt(e.mean)}${it.k === "N_e" ? " (Nₑ)" : ""}</text>`);
+    });
+    out.push(`<div><h4>${P.html}</h4><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${P.key}: posterior means and intervals vs the true value">${g.join("")}</svg></div>`);
+  }
+  host.innerHTML = out.join("");
+}
+$("paramplot").addEventListener("mousemove", e => { const g = e.target.closest("[data-tip]"); if (g) tipShow(g.dataset.tip, e); else $("tip").style.display = "none"; });
+$("paramplot").addEventListener("mouseleave", () => { $("tip").style.display = "none"; });
+
+/* lineages through time: number of branches alive at each time; unary (mutation) nodes don't change it */
+function lttSteps(start) {
+  const ev = [], st = [start];
+  while (st.length) {
+    const n = st.pop();
+    if (!n.children.length) ev.push([n.x, 1]);
+    else if (n.children.length > 1) ev.push([n.x, -(n.children.length - 1)]);
+    for (const c of n.children) st.push(c);
+  }
+  ev.sort((a, b) => b[0] - a[0]); // present first, going back in time
+  const xs = [], ks = []; let cur = 0;
+  for (let i = 0; i < ev.length;) {
+    const x = ev[i][0];
+    while (i < ev.length && ev[i][0] === x) cur += ev[i++][1];
+    xs.push(x); ks.push(cur); // count from x back to the next (older) event
+  }
+  return { xs, ks, rootX: start.x };
+}
+function lttAt(L, x) {
+  if (x > L.xs[0] || x < L.rootX) return null;
+  let lo = 0, hi = L.xs.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (L.xs[mid] >= x) lo = mid; else hi = mid - 1; }
+  return L.ks[lo];
+}
+function renderLTT(D) {
+  const host = $("lttplot");
+  const z = state.zoom;
+  const series = state.panels.map(p => {
+    const n = z ? p.byName.get(z.name) : p.root;
+    return n ? { p, L: lttSteps(n), c: seriesColor(p) } : null;
+  }).filter(Boolean);
+  $("ltthint").textContent = (z ? `Within clade ${z.name} (${z.tipCount} tips). ` : "") +
+    "Each line counts the branches alive at each time: a tip adds a lineage, a coalescence removes one. The time axis lines up with the trees above.";
+  $("lttlegend").innerHTML = series.map(s => `<span><b style="background:${s.c}"></b>${esc(s.p.label)}</span>`).join("");
+  const W = Math.max(320, host.clientWidth || $("panels").clientWidth), H = 280;
+  const showLabels = state.labels && D.tipsInView <= 70;
+  const m = { l: 10, r: showLabels ? 110 : 16, t: 12, b: 30 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const log = $("optLog").checked;
+  const kmax = Math.max(2, ...series.map(s => Math.max(...s.L.ks)));
+  const sx = v => m.l + (v - D.X0) / (D.X1 - D.X0) * iw;
+  const sy = log ? (k => m.t + ih - Math.log(k) / Math.log(kmax) * ih) : (k => m.t + ih - k / kmax * ih);
+  const g = [];
+  for (const t of niceTicks(D.X0, D.X1, Math.max(3, Math.round(iw / 110))))
+    g.push(`<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="#eee"/><text x="${sx(t)}" y="${H - m.b + 15}" text-anchor="middle">${fmtTick(state.beforePresent ? -t : t)}</text>`);
+  const yt = log ? [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000].filter(v => v <= kmax) : niceTicks(0, kmax, 4);
+  for (const k of yt) g.push(`<line x1="${m.l}" x2="${W - m.r}" y1="${sy(Math.max(k, log ? 1 : 0))}" y2="${sy(Math.max(k, log ? 1 : 0))}" stroke="#f0f0f0"/><text x="${m.l + 2}" y="${sy(Math.max(k, log ? 1 : 0)) - 3}">${fmtTick(k)}</text>`);
+  g.push(`<text x="${W - m.r}" y="${H - 3}" text-anchor="end">${state.beforePresent ? "generations before present" : "divergence"}</text>`);
+  g.push(`<defs><clipPath id="lttclip"><rect x="${m.l}" y="0" width="${iw + 6}" height="${H}"/></clipPath></defs><g clip-path="url(#lttclip)" fill="none">`);
+  for (const s of series.slice().sort((a, b) => isTrue(b.p) - isTrue(a.p))) { // true underneath
+    const { xs, ks, rootX } = s.L;
+    let d = `M${sx(xs[0]).toFixed(1)} ${sy(Math.max(1, ks[0])).toFixed(1)}`;
+    for (let i = 1; i < xs.length; i++) d += `H${sx(xs[i]).toFixed(1)}V${sy(Math.max(1, ks[i])).toFixed(1)}`;
+    d += `H${sx(rootX).toFixed(1)}`;
+    g.push(`<path d="${d}" stroke="${s.c}" stroke-width="2" stroke-linejoin="round"/>`);
+  }
+  // direct labels at each line's root (where it reaches one lineage), nudged apart
+  const labs = series.map(s => ({ s, x: sx(s.L.rootX) })).sort((a, b) => a.x - b.x);
+  let lastX = -1e9, lvl = 0;
+  for (const L of labs) {
+    lvl = L.x - lastX < 90 ? lvl + 1 : 0; lastX = L.x;
+    g.push(`<circle cx="${L.x}" cy="${sy(1)}" r="4" fill="${L.s.c}" stroke="#fff" stroke-width="2"/><text class="ink" x="${L.x + 7}" y="${sy(1) - 8 - lvl * 15}">${esc(L.s.p.label.replace(/^inferred · /, ""))} root</text>`);
+  }
+  g.push(`</g><g class="lov" pointer-events="none"></g>`);
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Lineages through time">${g.join("")}</svg>`;
+  state.ltt = { series, sx, sy, m, W, H, D };
+}
+function lttHover(e) {
+  const L = state.ltt; if (!L) return;
+  const svg = $("lttplot").querySelector("svg"); if (!svg) return;
+  const [mx] = svgPoint(svg, e);
+  if (mx < L.m.l || mx > L.W - L.m.r) { lttLeave(); return; }
+  const x = L.D.X0 + (mx - L.m.l) / (L.W - L.m.l - L.m.r) * (L.D.X1 - L.D.X0);
+  let h = `<line x1="${mx}" x2="${mx}" y1="${L.m.t}" y2="${L.H - L.m.b}" stroke="#333" stroke-dasharray="3 3"/>`;
+  const rows = L.series.map(s => {
+    const k = lttAt(s.L, x);
+    if (k !== null) h += `<circle cx="${mx}" cy="${L.sy(Math.max(1, k))}" r="4.5" fill="${s.c}" stroke="#fff" stroke-width="2"/>`;
+    return `<tr><td><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${s.c};margin-right:5px"></span>${esc(s.p.label)}</td><td class="n">${k === null ? "–" : k}</td></tr>`;
+  }).join("");
+  svg.querySelector(".lov").innerHTML = h;
+  const t = state.beforePresent ? -x : x;
+  tipShow(`<div class="h">${fmt(t)}${state.beforePresent ? " generations ago" : ""}</div><table><tr class="m"><td>tree</td><td class="n">lineages</td></tr>${rows}</table>`, e);
+  state.hoverX = x; state.hoverName = null; overlays();
+}
+function lttLeave() {
+  const svg = $("lttplot").querySelector("svg"); if (svg) svg.querySelector(".lov").innerHTML = "";
+  $("tip").style.display = "none";
+  if (state.hoverX != null) { state.hoverX = null; overlays(); }
+}
+$("lttplot").addEventListener("mousemove", lttHover);
+$("lttplot").addEventListener("mouseleave", lttLeave);
+
+function renderPlots(D) {
+  $("plots").hidden = false;
+  renderParams();
+  renderLTT(D);
 }
 
 /* ---------- hover / click ---------- */
@@ -506,6 +720,11 @@ function overlays() {
 function drawOverlay(p, svg) {
   const g = svg.querySelector(".ov"); if (!g) return;
   const name = state.hoverName;
+  if (!name && state.hoverX != null && p.view && state.cross) {
+    const x = p.view.sx(state.hoverX);
+    g.innerHTML = `<line x1="${x}" x2="${x}" y1="${p.view.m.t}" y2="${p.view.H - p.view.m.b}" stroke="#333" stroke-dasharray="3 3"/>`;
+    return;
+  }
   if (!name || !p.view) { g.innerHTML = ""; return; }
   const n = p.byName.get(name);
   if (!n) { g.innerHTML = ""; return; }
@@ -596,6 +815,7 @@ $("legend").addEventListener("mouseleave", () => { if (state.legendHover !== nul
 $("optMut").addEventListener("change", e => { state.showMut = e.target.checked; renderAll(); });
 $("optThick").addEventListener("change", e => { state.thick = e.target.checked; renderAll(); });
 $("optLabels").addEventListener("change", e => { state.labels = e.target.checked; renderAll(); });
+$("optLog").addEventListener("change", () => renderAll());
 $("optCross").addEventListener("change", e => { state.cross = e.target.checked; overlays(); });
 function setPanelH(h) {
   state.panelH = Math.round(Math.max(180, Math.min(4000, h)) / 10) * 10;
