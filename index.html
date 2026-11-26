@@ -88,10 +88,12 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .plegend span { display: inline-flex; align-items: center; gap: 6px; }
 .plegend b { display: inline-block; width: 16px; height: 2px; border-radius: 1px; }
 .pgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 28px; }
-.pgrid svg, #lttplot svg { display: block; width: 100%; }
+.pgrid svg { display: block; overflow: visible; }
+#lttplot svg { display: block; width: 100%; }
 .pgrid text, #lttplot text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
 .pgrid text.ink, #lttplot text.ink { fill: var(--ink); font-size: 12px; }
-.pgrid h4 { margin: 0 0 2px; font-size: 13px; font-weight: 700; }
+.pgrid h4 { margin: 0; font-size: 14px; font-weight: 700; }
+.pgrid h4 span { font-weight: 400; color: var(--muted); margin-left: 4px; }
 .chip { flex: 0 0 auto; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; padding: 3px 7px; border-radius: 3px; background: #eef4f8; color: var(--accent); }
 .ptitle { font-size: 14px; line-height: 1.4; }
 .pdesc { font-size: 12px; color: var(--muted); margin: 2px 0 0; line-height: 1.4; }
@@ -510,9 +512,9 @@ function paramsOf(p) {
   return (p._params = { est, tru });
 }
 const PARAMS = [
-  { key: "Ud", label: "U<tspan baseline-shift='sub' font-size='9'>d</tspan>", html: "U<sub>d</sub>", alts: ["Ud"] },
-  { key: "s", label: "s", html: "s", alts: ["s"] },
-  { key: "N", label: "N", html: "N", alts: ["N", "N_e"] }
+  { key: "Ud", html: "U<sub>d</sub>", desc: "deleterious mutation rate", alts: ["Ud"] },
+  { key: "s", html: "s", desc: "selection coefficient", alts: ["s"] },
+  { key: "N", html: "N", desc: "population size", alts: ["N", "N_e"] }
 ];
 function renderParams() {
   const host = $("paramplot");
@@ -522,6 +524,11 @@ function renderParams() {
   if (!rows.length) { $("paramsec").hidden = true; return; }
   $("paramsec").hidden = false;
   const out = [];
+  // draw at real pixel size so text stays the same size as the rest of the page
+  const gap = 28, hostW = host.clientWidth || $("panels").clientWidth;
+  const ncols = Math.max(1, Math.min(3, Math.floor((hostW + gap) / (300 + gap))));
+  host.style.gridTemplateColumns = `repeat(${ncols}, minmax(0, 1fr))`;
+  const W = Math.floor((hostW - gap * (ncols - 1)) / ncols);
   for (const P of PARAMS) {
     const vals = [];
     const items = rows.map(p => {
@@ -535,11 +542,11 @@ function renderParams() {
     if (!vals.length) continue;
     let lo = Math.min(...vals), hi = Math.max(...vals);
     const pad = (hi - lo || Math.abs(hi) || 1) * 0.12; lo -= pad; hi += pad;
-    const W = 320, rowH = 30, mL = 70, mR = 70, top = 24, H = top + items.length * rowH + 26;
+    const rowH = 28, mL = 70, mR = 76, top = 22, H = top + items.length * rowH + 24;
     const sx = v => mL + (v - lo) / (hi - lo) * (W - mL - mR);
     const g = [];
     for (const t of niceTicks(lo, hi, 4)) g.push(`<line x1="${sx(t)}" x2="${sx(t)}" y1="${top - 6}" y2="${H - 22}" stroke="#eee"/><text x="${sx(t)}" y="${H - 8}" text-anchor="middle">${fmtTick(t)}</text>`);
-    if (tv !== undefined) g.push(`<line x1="${sx(tv)}" x2="${sx(tv)}" y1="${top - 8}" y2="${H - 22}" stroke="#333" stroke-width="1.5" stroke-dasharray="4 3"/><text class="ink" x="${sx(tv)}" y="${top - 12}" text-anchor="middle">true ${fmt(tv)}</text>`);
+    if (tv !== undefined) g.push(`<line x1="${sx(tv)}" x2="${sx(tv)}" y1="${top - 8}" y2="${H - 22}" stroke="#333" stroke-width="1.5" stroke-dasharray="4 3"/><text class="ink" x="${sx(tv)}" y="${top - 12}" text-anchor="middle">true ${fmtP(tv)}</text>`);
     items.forEach((it, r) => {
       const y = top + r * rowH + rowH / 2;
       const c = seriesColor(it.p);
@@ -552,9 +559,9 @@ function renderParams() {
       g.push(`<g data-tip="${esc(tipHtml)}"><rect x="${mL - 4}" y="${y - rowH / 2}" width="${W - mL - mR + 8}" height="${rowH}" fill="transparent"/>`);
       if (hasI) g.push(`<line x1="${sx(e.lo)}" x2="${sx(e.hi)}" y1="${y}" y2="${y}" stroke="${c}" stroke-width="3" stroke-linecap="round"/>`);
       g.push(`<circle cx="${sx(e.mean)}" cy="${y}" r="5" fill="${c}" stroke="#fff" stroke-width="2"/></g>`);
-      g.push(`<text x="${W - mR + 8}" y="${y + 4}">${fmt(e.mean)}${it.k === "N_e" ? " (Nₑ)" : ""}</text>`);
+      g.push(`<text x="${W - mR + 8}" y="${y + 4}">${fmtP(e.mean)}${it.k === "N_e" ? " (Nₑ)" : ""}</text>`);
     });
-    out.push(`<div><h4>${P.html}</h4><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${P.key}: posterior means and intervals vs the true value">${g.join("")}</svg></div>`);
+    out.push(`<div><h4>${P.html}<span>${P.desc}</span></h4><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${P.key}: posterior means and intervals vs the true value">${g.join("")}</svg></div>`);
   }
   host.innerHTML = out.join("");
 }
@@ -934,7 +941,8 @@ function sharedSentences(texts) {
 }
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function fmt(v) { if (typeof v !== "number" || !isFinite(v)) return String(v); const a = Math.abs(v); return a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toPrecision(3); }
-function fmtTick(v) { return Math.abs(v) < 1e-9 ? "0" : (+v.toFixed(6)).toLocaleString("en-GB"); }
+function fmtTick(v) { return Math.abs(v) < 1e-12 ? "0" : (+v.toPrecision(6)).toLocaleString("en-GB", { maximumFractionDigits: 8 }); }
+function fmtP(v) { return Math.abs(v) >= 1000 ? Math.round(v).toLocaleString("en-GB") : String(+v.toPrecision(3)); }
 
 state.panelH = Math.round(Math.max(280, Math.min(600, (innerHeight - 170) / 3 - 46)) / 10) * 10;
 try { const h = +localStorage.getItem("treevis.panelH"); if (h >= 180) state.panelH = Math.min(4000, h); } catch (e) {}
